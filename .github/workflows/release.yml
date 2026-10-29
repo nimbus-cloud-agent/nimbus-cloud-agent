@@ -1,0 +1,36 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      # Frontend first: its output (web/dist) is embedded into the Go binary,
+      # so one binary serves the whole product. No separate frontend deploy.
+      - name: Build frontend
+        run: make web
+      - name: Build single binary
+        run: |
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o nimbus-cloud-agent ./cmd/nimbus
+          sha256sum nimbus-cloud-agent > nimbus-cloud-agent.sha256
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            nimbus-cloud-agent
+            nimbus-cloud-agent.sha256
+          generate_release_notes: true
