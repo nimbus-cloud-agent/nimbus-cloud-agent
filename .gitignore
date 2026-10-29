@@ -1,0 +1,5 @@
+/bin/
+/web/dist/
+/web/node_modules/
+third_party/deepseek-harness/
+*.log
