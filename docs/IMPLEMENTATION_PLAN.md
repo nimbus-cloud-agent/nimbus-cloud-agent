@@ -1,9 +1,10 @@
 # Nimbus Cloud Agent 实现计划
 
-> 依据：技术方案 v11（PG 唯一真相源、发件箱送达、Sandbox 工具化、E2B 沙箱 0..1 懒创建、
+> 依据：技术方案 v12（PG 唯一真相源、发件箱送达、Sandbox 工具化、E2B 沙箱 0..1 懒创建、Wasm PTC 运行时、
 > Go + Gin + GORM + Viper + Cobra、React 19 + HeroUI v3 + Tailwind v4）。
 >
 > v11 改动要点：执行层不再是自维护的 QEMU/KVM 虚拟机，改为直接接入 E2B API（Hobby 档）。
+> v12 改动要点：PTC 运行时仍在宿主机上，程序跑在 Wasm 引擎内（第一期 TypeScript 经 Wasm 内 QuickJS，Wasm 内存上限 256 MiB / 实例，超时默认 120 秒、上限 600 秒），不原样使用 DSH 自带 Node PTC 运行时；Sandbox 与 MCP 只是 PTC 经 SDK 同层级调用的两套工具。
 > 本计划中凡写 VM 处均指 E2B 沙箱，不再有 QEMU/KVM、后端 Hub + VM relay、本地 overlay 磁盘。
 >
 > 本文件只是一份实现计划，**不包含任何业务代码**。此前在本地搭过的
@@ -23,7 +24,7 @@
 | 0 | 工程骨架与配置 | — | 一个能跑、能打印版本、能连 PG 的二进制 |
 | 1 | Session + 发件箱 + 事件 + SSE | 0 | 不用前端，只用 curl 就能建会话、发消息、看流式事件 |
 | 2 | DSH 接入与 PG 同步 | 1 | 真实模型跑起来，历史落 PG，关机重开历史还在 |
-| 3 | Sandbox 工具化与宿主机能力剥离 | 2 | 宿主机上跑不出 `rm`/`bash`，E2B 沙箱里才能改文件、跑命令 |
+| 3 | Wasm PTC 运行时 + Sandbox 工具化与宿主机能力剥离 | 2 | 宿主机上跑不出 `rm`/`bash`，PTC 程序在 Wasm 里跑，E2B 沙箱里才能改文件、跑命令 |
 | 4 | Skill（PG）+ MCP（streamable-http + OAuth） | 2 | 页面/接口能配 Skill 和 MCP，Agent 能调 MCP 工具 |
 | 5 | E2B 沙箱生命周期：懒创建、暂停、恢复、销毁 | 3 | 只调 MCP 的会话全程 0 个沙箱；一调 Sandbox 工具就建 E2B 沙箱 |
 | 6 | 前端：React 19 + HeroUI v3，接真实 API | 1–5 | 浏览器里能完整走一遍聊天、发件箱、终端、设置 |
@@ -185,10 +186,11 @@ psql "$PG_DSN" -c "select seq, type from session_events where session_id='<id>' 
 
 ---
 
-## 第 3 阶段：Sandbox 工具化与宿主机能力剥离（安全边界）
+## 第 3 阶段：Wasm PTC 运行时 + Sandbox 工具化与宿主机能力剥离（安全边界）
 
-**目标**：这是 v9 推翻旧设计后的核心一节——**先把宿主机能力拿掉，
-再给 Agent 一套只能在 E2B 沙箱里执行的工具**。这一阶段不过，后面接什么工具都不安全。
+**目标**：这是 v9 推翻旧设计后的核心一节，也是 v11 之后 Wasm PTC 层的落地点——
+**PTC 运行时仍在宿主机上，但程序跑在 Wasm 里；先把宿主机能力拿掉，
+再给 Agent 一套只能经 SDK 调用的工具**。这一阶段不过，后面接什么工具都不安全。
 
 **做：**
 
@@ -196,6 +198,19 @@ psql "$PG_DSN" -c "select seq, type from session_events where session_id='<id>' 
    - DSH 自带的本地 fs / bash / 子进程 / sandbox provider 一律不注册。
    - 宿主机文件既不能改、也不能读、也不能执行命令；启动时检查工具目录：
      只要出现本地文件读写或本地命令执行能力，启动即失败，不降级跑起来。
+   - DSH 自带的 Node PTC 运行时不原样使用：若检测到它可直接 import fs / child_process，
+     启动即失败；改用自定义 Wasm PTC 运行时，经 tool-presentation mode ptc 组合接入。
+2. Wasm PTC 运行时（宿主机上，程序跑在 Wasm 引擎内，不搬进 E2B 沙箱）：
+   - 引擎为 wasmtime 类 Wasm 引擎，第一期语言为 TypeScript，经跑在 Wasm 内的 QuickJS 执行；
+     Python 经 Pyodide 列为后续扩展，不在本期实现。
+   - WASI 能力默认全禁、白名单放行：不授予宿主机目录、不授予任意网络、
+     不授予进程创建、不授予环境变量读取；程序的直接文件读写、直接联网、spawn/exec
+     在 Wasm 层即不存在，不靠事后检查拦截。
+   - 程序产生副作用的唯一通道是 SDK 宿主函数，由宿主机上的受信任监督进程接收并校验后执行；
+     Sandbox 工具与 MCP 工具在同一层级：前者背后是 E2B 沙箱，后者背后是宿主机上的 MCP 客户端，
+     OAuth token 只存在监督进程与后端一侧，永不进入 Wasm 程序环境；Wasm 程序不得直连 MCP 服务器，
+     不得从沙箱内发起 MCP 请求。
+   - Wasm 程序超时与 PTC 原有 120 秒默认、600 秒上限一致（这是 Wasm 执行超时，不是 E2B 沙箱超时）。
    - 后端进程本身不直接替 Agent 跑宿主机命令；所有执行请求只走 Sandbox 工具。
 2. Sandbox 工具集（PTC 经 SDK、standard 直接调用，共用同一隔离边界）：
    - `sandbox_status`：查当前会话的 E2B 沙箱状态（无行即 `not_started`）。
@@ -217,6 +232,8 @@ psql "$PG_DSN" -c "select seq, type from session_events where session_id='<id>' 
 
 ```sh
 # 1) 宿主机逃逸测试：让模型/工具尝试在宿主机上 touch / rm / bash，必须全部被拒绝
+# 1b) Wasm 逃逸测试：让 PTC 程序在 Wasm 内尝试 import fs、读写宿主机文件、spawn、直连网络、直连 MCP，
+#     必须全部在 Wasm 层即失败；经 SDK 调 sandbox_* 与 mcp__* 则必须成功
 # 2) 沙箱内测试：sandbox_exec 在 E2B 沙箱里写文件、读文件、跑命令，全部成功
 # 3) Plan 开启时，sandbox_write_file / sandbox_exec 仍可正常写进 E2B 沙箱（DSH 原生行为，不拦截）
 ```
@@ -226,6 +243,8 @@ psql "$PG_DSN" -c "select seq, type from session_events where session_id='<id>' 
 
 **交付标准：**
 
+- [ ] Wasm PTC 程序的直接文件读写、直接联网、spawn/exec 全部在 Wasm 层失败，
+      经 SDK 的 Sandbox 与 MCP 调用全部成功且 token 不进 Wasm 程序环境。
 - [ ] 宿主机文件读写、宿主机命令执行、宿主机子进程三条路全部被堵死，
       且启动时断言能发现其中任何一条被重新注册。
 - [ ] `sandbox_exec` / `sandbox_read_file` / `sandbox_write_file` 只在 E2B 沙箱内生效，
@@ -418,7 +437,7 @@ cd web && npm install && npm run build && npm run preview
    发布说明里写清外部依赖只有 PostgreSQL 与 E2B API、DSH 需自装、
    以及本版不支持的项（见下）。
 5. 文档收尾：README、ARCHITECTURE、SECURITY、CONTRIBUTING 与技术方案
-   v11 的版本号、固定数值表、决策表保持一致，不留“建议/待定”措辞。
+   v12 的版本号、固定数值表、决策表保持一致，不留“建议/待定”措辞。
 
 **本阶段不支持的项（明确写进发布说明，不假装已实现）：**
 
