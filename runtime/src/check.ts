@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { runWasm } from "./wasm.js";
 import type { CheckRequest, RuntimeInfo } from "./generated/types.js";
 export async function check(input: CheckRequest): Promise<RuntimeInfo> {
-  if (input.protocolVersion !== 2)
+  if (input.protocolVersion !== 3)
     throw Error("Unsupported Nimbus protocol version");
   const require = createRequire(import.meta.url);
   const harness = JSON.parse(
@@ -29,6 +29,6 @@ export async function check(input: CheckRequest): Promise<RuntimeInfo> {
   return {
     name: "nimbus-agent-runtime",
     version: metadata.version,
-    protocolVersion: 2,
+    protocolVersion: 3,
   };
 }

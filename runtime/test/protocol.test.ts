@@ -11,7 +11,11 @@ test(
   async () => {
     const runtime = new TestRuntime();
     try {
-      const info = await runtime.client.check({ protocolVersion: 2 });
+      await assert.rejects(
+        runtime.client.check({ protocolVersion: 2 }),
+        /Invalid CheckRequest/,
+      );
+      const info = await runtime.client.check({ protocolVersion: 3 });
       assert.equal(info.name, "nimbus-agent-runtime");
       const first = await runtime.client.status({});
       assert.equal(first.pid, runtime.child.pid);
@@ -56,7 +60,6 @@ test("SDK cancellation is scoped to its reverse request and permits simultaneous
   });
   registerControl(b, {
     event: async () => ({ ok: true }),
-    output: async () => ({ ok: true }),
     question: async () => ({ answer: { dismissed: true } }),
     tool: async (input, signal) => {
       if (input.call.name === "wait") {

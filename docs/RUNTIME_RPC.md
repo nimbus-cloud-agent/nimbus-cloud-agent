@@ -8,7 +8,7 @@ The source of truth is [`protocol/runtime.openrpc.json`](../protocol/runtime.ope
 
 | Layer | Go | TypeScript |
 | --- | --- | --- |
-| Application boundary | `internal/executor/client.go`: typed facade, scope ownership, output decoding and domain errors | `src/service.ts` / `src/ports.ts`: typed runtime handlers and host callbacks |
+| Application boundary | `internal/executor/client.go`: typed facade, scope ownership, event decoding and domain errors | `src/service.ts` / `src/ports.ts`: typed runtime handlers and host callbacks |
 | Anti-corruption adapter | `internal/runtimeprotocol/peer.go` | `src/rpc/peer.ts` |
 | JSON-RPC SDK | `github.com/sourcegraph/jsonrpc2` with `VSCodeObjectCodec` | `vscode-jsonrpc` with `StreamMessageReader` / `StreamMessageWriter` |
 | Validation | `github.com/santhosh-tekuri/jsonschema/v6` | AJV |
@@ -16,15 +16,15 @@ The source of truth is [`protocol/runtime.openrpc.json`](../protocol/runtime.ope
 
 Generated directories, compiled JavaScript, `test-dist/`, and tarballs are ignored by Git. **Do not commit or edit them.** `make`, `make test` and `make pack-runtime` automatically generate before compiling. npm build/test/prepack entries do the same. `make generate` prepares a source checkout for direct Go commands; `npm run protocol:check` checks local outputs against the current contract. Release CI generates on every build.
 
-Both sides validate requests and results against generated copies of the same schemas. Some native Harness headers/records/frames, attachment references and provider schemas use opaque wire extension fields. The Go facade decodes their known projection immediately into application models; they never flow through business code as `any` or raw JSON. E2B results, MCP discovery/OAuth envelopes and review answers are named DTOs. Native history and foreign MCP content preserve unknown fields. Worker messages retain their native SDK types and discriminants until the stdio boundary. Adding or changing a method starts in OpenRPC, followed by generation and compiler-guided updates to handlers.
+Both sides validate requests and results against generated copies of the same schemas. Some native Harness headers/records/frames, attachment references and provider schemas use opaque wire extension fields. The Go facade decodes their known projection immediately into application models; they never flow through business code as `any` or raw JSON. MCP discovery/OAuth envelopes and review answers are named DTOs. Sandbox results originate as typed Go application models and are serialized only when returning a tool result to Harness. Native history and foreign MCP content preserve unknown fields. Worker messages retain their native SDK types and discriminants until the stdio boundary. Adding or changing a method starts in OpenRPC, followed by generation and compiler-guided updates to handlers.
 
 ## Transport and lifetime
 
-The private stdio pipe uses **JSON-RPC 2.0 with Content-Length framing**, not newline-delimited JSON. Both SDKs own wire parsing, request correlation and serialized writes. stdout is reserved for protocol data. Keys and OAuth data are scoped request inputs, not arguments or inherited environment variables.
+The private stdio pipe uses **JSON-RPC 2.0 with Content-Length framing**, not newline-delimited JSON. Both SDKs own wire parsing, request correlation and serialized writes. stdout is reserved for protocol data. DeepSeek keys and OAuth data are scoped request inputs, not arguments or inherited environment variables. E2B credentials stay in Go and never cross this protocol.
 
 Method parameters are named and wrapped as `params: { "request": <DTO> }`. Generated clients/services hide this wrapper. SDK errors are translated at the adapters; application code does not construct JSON-RPC messages. No batch calls are part of the Nimbus contract. IDs are SDK correlation details (Go selects `go:<sequence>`, Node uses its SDK defaults), independent in each direction.
 
-Runtime package 0.2.0 uses protocol v2, incompatible with the older generic E2B/MCP envelopes. Upgrade the Go binary and npm package together. `runtime.check` sends `{protocolVersion: 2}` and returns `{name: "nimbus-agent-runtime", version, protocolVersion: 2}`. Go checks runtime identity and protocol compatibility. Inside the package, preflight checks the pinned Harness release and Wasm isolation. Future incompatible contract changes require a protocol version change.
+Runtime package 0.3.0 uses protocol v3. Upgrade the Go binary and npm package together. `runtime.check` sends `{protocolVersion: 3}` and returns `{name: "nimbus-agent-runtime", version, protocolVersion: 3}`. Go checks runtime identity and protocol compatibility; package preflight checks the pinned Harness release and Wasm isolation. Version 3 removes `runtime.e2b`, `terminal.open`, `terminal.write`, `runtime.output` and their DTOs. Older peers are rejected at preflight.
 
 ## Go → runtime
 
@@ -33,11 +33,8 @@ Runtime package 0.2.0 uses protocol v2, incompatible with the older generic E2B/
 | `runtime.check` | Protocol version → runtime identity/version; package-owned dependency and isolation checks |
 | `runtime.status` | Empty request → PID, worker count, busy workers, queued turns and active operation count |
 | `turn.start` | Operation/session/turn IDs, locked preset, options, native history, message/images, attachment bytes, skills, MCP definitions, private working directory and API key → `{finished: true}` after durable completion and context disposal |
-| `runtime.e2b` | Operation ID, SDK operation, key, sandbox/template and arguments → an `E2BResult` containing `info`, `command`, `readFile`, `writeFile` or `ok`; Go exposes separate typed facade methods and rejects a missing operation result. Streaming commands also issue output callbacks |
 | `runtime.mcp` | Operation, URL, OAuth state, callback URL and arguments → `MCPResult` with typed `ok`, `oauth_state`, `oauth_data`, tool descriptors, optional result/error/auth URL. OAuth storage is never exposed in the browser response |
 | `runtime.images` | Image bytes as base64, type/name and private cache directory → normalized native reference and base64 bytes |
-| `terminal.open` | Operation ID, terminal ID, sandbox ID, key and optional dimensions → pending for the PTY lifetime |
-| `terminal.write` | Terminal ID plus input/resize message → `{ok: true}` |
 
 ## Runtime → Go
 
@@ -48,7 +45,8 @@ Each callback carries an **`operationId` UUID** allocated by Go and bound to its
 | `turn.event` | Operation ID, event kind and native data → `{ok: true}` only after persistence. Kinds: `header`, `ready`, `record`, `frame`, `flushing`, `done` |
 | `turn.question` | Operation ID and native question → `{answer: <validated human response>}` after an explicit browser answer |
 | `tool.call` | Operation ID and `{name,args,call_id}` → `{value: <tool result>}` after authorization/scoped E2B/MCP dispatch |
-| `runtime.output` | Operation ID and command/PTY data → `{ok: true}` after the database commit or terminal WebSocket write |
+
+For sandbox tools, `tool.call` enters Go's typed application boundary. Go resolves the owning session and sandbox, invokes `internal/sandbox`, persists command output directly, then returns the final result. There is no Go → runtime → E2B hop. Terminal traffic is entirely outside this protocol, so Node restarts do not interrupt PTYs. See [ARCHITECTURE](../ARCHITECTURE.md) for the E2B SDK boundary and lifecycle.
 
 A waiting Plan question leaves both pipe readers free to process other requests. Go registers callbacks synchronously, then executes them concurrently; the worker preserves its event chain and awaits each acknowledgement. A callback can itself call the runtime without deadlocking. A final successful turn requires a durable `done` event matching PostgreSQL's native sequence. Cleanup closes the scope and waits for active callbacks before returning to the dispatcher.
 
@@ -63,10 +61,10 @@ Cancellation in either direction uses the SDK convention **`$/cancelRequest`**, 
 - `/api/health` exposes the supervisor's state, PID and generation without a Node round trip. Generation is scoped to the current Go lifetime.
 - Normal Go shutdown closes stdin and stops supervision; Node aborts operations and exits on stdin EOF, including after a hard Go crash. Hard failure cannot guarantee cancellation of commands already accepted by E2B.
 
-One process owns a lazy pool of up to 20 reusable worker threads. V8/module caches remain warm. Every turn still creates and disposes its own Cordis context, credential snapshot, hydrated native history and attachment cache. Durable session identity lives in PostgreSQL, not in a worker. QuickJS runs off the service thread; E2B/MCP/image/PTY adapters share the persistent asynchronous service.
+One process owns a lazy pool of up to 20 reusable worker threads. V8/module caches remain warm. Every turn still creates and disposes its own Cordis context, credential snapshot, hydrated native history and attachment cache. Durable session identity lives in PostgreSQL, not in a worker. QuickJS runs off the service thread; MCP/image adapters share the persistent asynchronous service. E2B and PTYs are owned exclusively by Go.
 
 ## Distribution and checks
 
-`make pack-runtime` emits `release/nimbus-agent-runtime-0.2.0.tgz`. Install that package independently with `npm install -g <tarball>`; its dependency installation supplies Harness. The package is not yet published to the public npm registry. The Go release contains only the compiled UI and Go program, and defaults to the `nimbus-agent-runtime` executable on PATH. `--runtime-command` supports alternate installation locations.
+`make pack-runtime` emits `release/nimbus-agent-runtime-0.3.0.tgz`. Install that package independently with `npm install -g <tarball>`; its dependency installation supplies Harness. The package is not yet published to the public npm registry. The Go release contains only the compiled UI and Go program, and defaults to the `nimbus-agent-runtime` executable on PATH. `--runtime-command` supports alternate installation locations.
 
 `make test` generates and compiles the TS fixtures before Go tests. Cross-language tests cover real SDK framing, 12 concurrent multi-megabyte UTF-8 responses, nested calls, output acknowledgements, cancellation, malformed inputs and active/idle crash recovery. TypeScript tests cover real package preflight, worker reuse/replacement, MCP pagination/large responses and Wasm limits. `scripts/runtime-e2e.ts` checks real Flash/DSH/E2B, Plan concurrency, Stop, SIGKILL recovery and terminal I/O; it cleans only its own test sessions.

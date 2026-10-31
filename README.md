@@ -48,8 +48,8 @@ npm start
 The development launcher uses the workspace's `node_modules/.bin/nimbus-agent-runtime`. For an installation outside this repository, distribute the Go executable and runtime package separately:
 
 ```sh
-make pack-runtime         # release/nimbus-agent-runtime-0.2.0.tgz
-npm install -g ./release/nimbus-agent-runtime-0.2.0.tgz
+make pack-runtime         # release/nimbus-agent-runtime-0.3.0.tgz
+npm install -g ./release/nimbus-agent-runtime-0.3.0.tgz
 ./bin/nimbus-cloud-agent serve
 ```
 
@@ -57,7 +57,7 @@ The npm package **directly depends on DeepSeek Harness** and installs its own SD
 
 The application keeps persistence records (`internal/store`) separate from business aggregates (`internal/model`). Only the DAO uses GORM; business transactions receive a transaction-scoped DAO. JSONB fields are decoded on read and RPC results are mapped at the adapter, so sandbox IDs, options, attachments and review answers stay typed throughout processing. See [Architecture](ARCHITECTURE.md#models-and-io-boundaries).
 
-Runtime 0.2.0 requires protocol v2; update both the Go executable and runtime package together.
+Runtime 0.3.0 requires protocol v3; update both the Go executable and runtime package together. E2B is owned by Go; the runtime no longer installs the E2B npm SDK or accepts sandbox credentials.
 
 The protocol source is `protocol/runtime.openrpc.json`. quicktype generates Go/TypeScript DTOs; typed clients and dispatchers are generated alongside them. Both sides use JSON-RPC SDKs with Content-Length framing. Generated files and build artifacts are ignored by Git. **`make`, `make test`, `make pack-runtime`, and the npm build/test/pack entries generate automatically.** Run `make generate` explicitly when preparing an editor or invoking Go commands directly.
 
@@ -78,14 +78,14 @@ Changing a key or template in the UI takes effect on subsequent turns/new sandbo
 ## Implemented behavior
 
 - Three-column Chinese workspace; mobile Session / Chat / Terminal tabs; Markdown replies and expandable tool records.
-- One persistent Node process for turns, MCP, E2B, image normalization and PTYs. A reusable worker-thread pool keeps PTC execution independent across sessions; each turn receives a fresh DSH context and PostgreSQL-backed working copy. No per-turn Node process startup.
+- One persistent Node process for turns, MCP and image normalization. Go owns E2B lifecycle, commands, files and PTYs through a dedicated adapter. A reusable worker-thread pool keeps PTC execution independent across sessions; each turn receives a fresh DSH context and PostgreSQL-backed working copy. No per-turn Node process startup.
 - Go automatically restarts a crashed Node service with bounded backoff. Affected turns/reviews become interrupted and retain saved output; accepted tool operations are never replayed automatically. `/api/health` exposes the Node PID and generation.
 - Durable outbox with idempotency, serial processing per session, queueing during a turn, retry of failed delivery, stop, rename, and delete.
 - Incremental assistant **and command output committed before SSE publication**. Reconnect replays from PostgreSQL and deduplicates records.
 - Crash recovery marks unfinished turns interrupted. A new message, including “continue”, starts a new turn. Original Harness records are hydrated through its public persistence API; unfinished displayed text is supplied as explicit recovery context.
 - One lazily created E2B sandbox per session; plain chat and MCP-only work do not start it. Files live in E2B, not the Mac.
 - E2B create/connect/pause/kill, 15-minute idle pause, one-hour `onTimeout: pause`, proactive pause near the deadline, and cloud state reconciliation. Default Hobby template reports its actual CPU and RAM from E2B.
-- Real xterm.js PTY with input, resize, Ctrl-C, reconnect, and the same filesystem as the agent.
+- Real xterm.js PTY with input, resize, Ctrl-C, reconnect, and the same filesystem as the agent. Terminal bytes flow directly through Go to E2B and remain connected across Node restarts.
 - `deepseek-flash` with native Harness Plan behavior and `off / low / high / max` thinking. Standard / Wasm PTC is a session preset: selectable before the first message, permanently fixed when that message is accepted, including queued or failed turns. Start a new session to change presets. Plan and thinking remain adjustable for subsequent turns.
 - Native `exit_plan_mode` opens a persistent plan review in the conversation. Approve to leave Plan and continue, send revision feedback to keep planning, or defer to end the turn without approval. Browser refresh retains pending reviews; Stop or a backend restart interrupts them. Human review time does not consume the PTC execution deadline.
 - Upload, paste, or drag PNG, JPEG, WebP and GIF images into the composer; preview/remove before sending and view full images in history. Up to 4 images per message, 5 MiB per image and 10 MiB total. GIF input uses the first frame. Native DSH image attachments are retained in PostgreSQL and restored on later turns; image-only messages are supported. Viewing or analyzing an image does not require an E2B sandbox.
@@ -114,7 +114,8 @@ node scripts/features-e2e.mjs    # Skills, Plan/max, isolation, stop, idle pause
 node scripts/invariants-e2e.mjs  # idempotency, queue, append-only DB, validation
 node scripts/session-updates-e2e.mjs # Flash vision, preset locking, SSE, 5s heartbeat, UI
 node scripts/plan-e2e.mjs        # real Flash/DSH plan approval, feedback, defer, refresh, stop
-node scripts/runtime-e2e.ts     # persistent PID, concurrency, stop, Node crash/restart, E2B/PTY
+node scripts/runtime-e2e.ts     # persistent PID, concurrency, stop, Node crash/restart, Go E2B tools
+node scripts/terminal-e2e.ts    # Chrome + direct Go PTY survives Node SIGSTOP/SIGKILL
 node scripts/recovery-e2e.mjs    # hard crash, partial output, new turn
 # Separate terminal:
 node scripts/mcp-fixture.mjs

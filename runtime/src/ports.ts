@@ -25,15 +25,6 @@ export interface TurnHost {
   askQuestion(request: ReviewRequest): Promise<ReviewAnswer>;
   callTool(call: ToolCall, signal?: AbortSignal): Promise<ExternalValue>;
 }
-export interface OutputHost<T> {
-  signal: AbortSignal;
-  emit(data: T): Promise<void>;
-}
-export interface CommandOutput {
-  channel: "stdout" | "stderr";
-  text: string;
-}
-export type TerminalOutput = { data: string } | { ready: true };
 export type TurnInput = TurnRequest;
 // MCP/plugin tools define their own result schemas. Nimbus forwards these to
 // Harness without interpreting their shape; owned results have named DTOs.

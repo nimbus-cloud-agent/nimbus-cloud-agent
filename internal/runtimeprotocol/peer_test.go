@@ -30,6 +30,10 @@ func TestInboundSchemaAndSDKErrorMapping(t *testing.T) {
 		code   int64
 	}{
 		{"missing", map[string]any{}, -32601},
+		{"runtime.e2b", map[string]any{}, -32601},
+		{"terminal.open", map[string]any{}, -32601},
+		{"terminal.write", map[string]any{}, -32601},
+		{"runtime.output", map[string]any{}, -32601},
 		{"turn.event", map[string]any{}, -32602},
 		{"turn.event", map[string]any{"request": map[string]any{"operationId": "test", "event": "invented", "data": nil}}, -32602},
 	} {
@@ -86,10 +90,10 @@ func TestResultSchemaIsCheckedBeforeDecoding(t *testing.T) {
 	defer peer.Close()
 	sdk := jsonrpc2.NewConn(ctx, jsonrpc2.NewBufferedStream(server, jsonrpc2.VSCodeObjectCodec{}), jsonrpc2.HandlerWithError(func(context.Context, *jsonrpc2.Conn, *jsonrpc2.Request) (any, error) {
 		// Missing version must not become the zero-value string during decoding.
-		return map[string]any{"name": "nimbus-agent-runtime", "protocolVersion": 2}, nil
+		return map[string]any{"name": "nimbus-agent-runtime", "protocolVersion": 3}, nil
 	}))
 	defer sdk.Close()
-	_, err := (generated.RuntimeClient{Peer: peer}).Check(ctx, generated.CheckRequest{ProtocolVersion: 2})
+	_, err := (generated.RuntimeClient{Peer: peer}).Check(ctx, generated.CheckRequest{ProtocolVersion: 3})
 	var fault *Fault
 	if !errors.As(err, &fault) || fault.Code != -32603 {
 		t.Fatalf("invalid result accepted: %v", err)

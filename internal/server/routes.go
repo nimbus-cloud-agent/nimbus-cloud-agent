@@ -354,7 +354,7 @@ func (s *Server) deleteSession(c *gin.Context) {
 		return
 	}
 	if err == nil && sb.State != "killed" {
-		if e := s.R.KillSandbox(c.Request.Context(), s.C.E2BKey, sb.E2bSandboxID); e != nil {
+		if e := s.Sandboxes.Kill(c.Request.Context(), sb.E2bSandboxID); e != nil {
 			s.fail(c, 502, e)
 			return
 		}

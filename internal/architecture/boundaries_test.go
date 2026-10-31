@@ -33,6 +33,9 @@ func TestPersistenceAndSerializationBoundaries(t *testing.T) {
 		}
 		for _, imp := range file.Imports {
 			name, _ := strconv.Unquote(imp.Path.Value)
+			if strings.HasPrefix(name, "github.com/matiasinsaurralde/go-e2b") && pkg != "sandbox" {
+				t.Errorf("%s imports E2B outside the sandbox adapter", rel)
+			}
 			db := name == "database/sql" || strings.HasPrefix(name, "gorm.io/") || strings.HasPrefix(name, "github.com/jackc/")
 			if db && pkg != "store" {
 				t.Errorf("%s imports persistence driver %s outside DAO", rel, name)

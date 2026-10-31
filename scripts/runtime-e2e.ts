@@ -272,7 +272,7 @@ try {
   await terminal(b);
   assert.equal((await health()).pid, idle.pid);
   console.log(
-    "PASS PTC → JSON-RPC tool callback → E2B streaming; resident PTY input/resize/output; PID unchanged",
+    "PASS PTC → JSON-RPC tool callback → Go E2B streaming; direct Go PTY input/resize/output; PID unchanged",
   );
 } finally {
   for (const id of ids)

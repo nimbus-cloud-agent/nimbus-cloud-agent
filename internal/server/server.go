@@ -17,6 +17,7 @@ import (
 	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/config"
 	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/executor"
 	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/model"
+	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/sandbox"
 	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/store"
 )
 
@@ -32,6 +33,7 @@ type Server struct {
 	C             config.Config
 	S             *store.Store
 	R             *executor.Runtime
+	Sandboxes     sandbox.Service
 	HTTP          *http.Server
 	mu            sync.Mutex
 	running       map[string]*runningTurn
@@ -47,13 +49,13 @@ type Server struct {
 	BaseURL       string
 }
 
-func New(c config.Config, st *store.Store, frontend fs.FS, runtime *executor.Runtime) (*Server, error) {
+func New(c config.Config, st *store.Store, frontend fs.FS, runtime *executor.Runtime, sandboxes sandbox.Service) (*Server, error) {
 	host, _, e := net.SplitHostPort(c.Addr)
 	if e != nil || !(host == "localhost" || net.ParseIP(host) != nil && net.ParseIP(host).IsLoopback()) {
 		return nil, fmt.Errorf("single-user control plane must bind loopback (127.0.0.1:8080)")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	s := &Server{C: c, S: st, R: runtime, running: map[string]*runningTurn{}, ctx: ctx, cancel: cancel, BaseURL: "http://" + c.Addr}
+	s := &Server{C: c, S: st, R: runtime, Sandboxes: sandboxes, running: map[string]*runningTurn{}, ctx: ctx, cancel: cancel, BaseURL: "http://" + c.Addr}
 	if e = st.RecoverInterrupted(ctx); e != nil {
 		cancel()
 		return nil, e

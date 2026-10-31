@@ -9,7 +9,7 @@ registerRuntime(peer, {
   check: async () => ({
     name: "nimbus-agent-runtime",
     version: "fixture",
-    protocolVersion: 2,
+    protocolVersion: 3,
   }),
   status: async () => ({
     pid: process.pid,
@@ -20,40 +20,26 @@ registerRuntime(peer, {
   }),
   mcp: async () => ({ ok: true, oauth_state: "none", oauth_data: {} }),
   images: async (input) => ({ ref: { name: input.name }, data: input.data }),
-  e2b: async (input, signal) => {
-    if (input.args?.command === "wait") {
-      await control.output(
-        {
-          operationId: input.operationId,
-          data: { channel: "stdout", text: "waiting" },
-        },
-        signal,
-      );
-      await new Promise<void>((resolve) => {
-        if (signal.aborted) resolve();
-        else signal.addEventListener("abort", () => resolve(), { once: true });
-      });
-      signal.throwIfAborted();
-    }
-    if (input.stream)
+  turn: async (input, signal) => {
+    if (["stream", "nested", "wait"].includes(input.message)) {
       for (let i = 0; i < 3; i++)
-        await control.output(
+        await control.event(
           {
             operationId: input.operationId,
-            data: { channel: "stdout", text: String(i) },
+            event: "frame",
+            data: { type: "tool-output", channel: "stdout", text: String(i) },
           },
           signal,
         );
-    if (input.op === "read_file")
-      return {
-        readFile: { content: input.args?.path ?? "", truncated: false },
-      };
-    return {
-      command: { stdout: "", stderr: "", exitCode: 0, truncated: false },
-    };
-  },
-  turn: async (input, signal) => {
-    if (input.message === "cancel-tool") {
+      if (input.message === "wait") {
+        await new Promise<void>((resolve) => {
+          if (signal.aborted) resolve();
+          else
+            signal.addEventListener("abort", () => resolve(), { once: true });
+        });
+        signal.throwIfAborted();
+      }
+    } else if (input.message === "cancel-tool") {
       const controller = new AbortController();
       const pending = control.tool(
         {
@@ -84,8 +70,6 @@ registerRuntime(peer, {
     );
     return { finished: true };
   },
-  terminal: async () => ({ ok: true }),
-  terminalWrite: async () => ({ ok: true }),
 });
 peer.listen();
 process.stdin.on("end", () => {

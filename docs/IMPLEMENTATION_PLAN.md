@@ -6,7 +6,8 @@ The current implementation also includes:
 
 - DeepSeek Flash text and image input, upload/paste/drop, previews, and durable image history.
 - A session-level Standard/PTC preset, fixed at first message acceptance and enforced through SQL, API, retry, and runtime resume.
-- Session-list and conversation EventSource streams with independent 5-second heartbeats.
+- PostgreSQL LISTEN/NOTIFY-driven session and conversation streams, Go 1.25 iterators and independent 5-second heartbeats.
+- Go-owned E2B SDK adapter and direct WebSocket PTYs; Harness sandbox tools call Go through reverse RPC. Runtime 0.3.0 / protocol v3 removes E2B/terminal services from Node.
 - Refined desktop/mobile layouts, resizable terminal width, adjustable terminal fonts, and a working Plan control.
 - Native plan-review channel and persistent browser cards, with approval, revision feedback, deferral, refresh recovery, interruption handling, and human-wait-aware Wasm execution budgets.
 

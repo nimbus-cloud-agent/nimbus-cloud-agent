@@ -1,6 +1,6 @@
 {
   "name": "nimbus-agent-runtime",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "DeepSeek Harness wrapper for the Nimbus control plane, exposed through JSON-RPC 2.0 over stdio.",
   "type": "module",
   "license": "MIT",
@@ -15,8 +15,8 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json && chmod +x dist/service.js && npm rebuild nimbus-agent-runtime --ignore-scripts",
-    "build:test": "tsc -p tsconfig.test.json && chmod +x test-dist/test/fixtures/service.js",
+    "build": "rm -rf dist && tsc -p tsconfig.json && chmod +x dist/service.js && npm rebuild nimbus-agent-runtime --ignore-scripts",
+    "build:test": "rm -rf test-dist && tsc -p tsconfig.test.json && chmod +x test-dist/test/fixtures/service.js",
     "test": "npm run build:test && node --test test-dist/test/*.test.js",
     "prepack": "npm run build",
     "prebuild": "node ../scripts/generate-protocol.ts",
@@ -46,7 +46,6 @@
     "@deepseek-ai/dsh-user-questions": "0.2.1-rc.5",
     "@modelcontextprotocol/sdk": "1.32.2",
     "ajv": "8.20.0",
-    "e2b": "2.62.0",
     "quickjs-emscripten": "0.31.0",
     "vscode-jsonrpc": "10.0.0"
   },

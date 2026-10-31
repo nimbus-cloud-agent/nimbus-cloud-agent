@@ -2,6 +2,7 @@ package executor
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
@@ -26,7 +27,18 @@ func fixtureCommand(t *testing.T) string {
 	return path
 }
 func echo(r *Runtime, ctx context.Context, text string) (model.FileReadResult, error) {
-	return r.ReadSandboxFile(ctx, "", "fixture", text)
+	result, err := r.Images(ctx, ImageRequest{Name: "fixture.png", Data: base64.StdEncoding.EncodeToString([]byte(text))})
+	return model.FileReadResult{Content: string(result.Data)}, err
+}
+func streamTurn(r *Runtime, ctx context.Context, message string, output func(model.CommandOutput) error) error {
+	input := fixtureTurn()
+	input.Message = message
+	return r.Turn(ctx, input, func(event model.TurnEvent) error {
+		if event.Frame != nil {
+			return output(model.CommandOutput{Channel: event.Frame.Channel, Text: event.Frame.Text})
+		}
+		return nil
+	}, nil, nil)
 }
 func fixtureTurn() TurnInput {
 	return TurnInput{SessionID: "session", TurnID: "turn", MessageID: "message", Message: "review", SessionMode: "standard", Options: model.DefaultOptions()}
@@ -66,7 +78,7 @@ func TestRPCMultiplexAndBackpressure(t *testing.T) {
 	pid := r.Status().PID
 	// A callback may call the same runtime without blocking the stdout reader.
 	command := "nested"
-	_, err := r.ExecSandbox(ctx, "", "fixture", model.SandboxArgs{Command: command}, func(chunk model.CommandOutput) error {
+	err := streamTurn(r, ctx, command, func(chunk model.CommandOutput) error {
 		_, err := echo(r, ctx, chunk.Text)
 		return err
 	})
@@ -74,7 +86,7 @@ func TestRPCMultiplexAndBackpressure(t *testing.T) {
 		t.Fatal(err)
 	}
 	next := 0
-	_, err = r.ExecSandbox(ctx, "", "fixture", model.SandboxArgs{Command: "stream"}, func(chunk model.CommandOutput) error {
+	err = streamTurn(r, ctx, "stream", func(chunk model.CommandOutput) error {
 		if chunk.Text != fmt.Sprint(next) {
 			t.Errorf("out of order: %s != %d", chunk.Text, next)
 		}
@@ -102,7 +114,8 @@ func TestCancelRequestKeepsOtherRequestsAlive(t *testing.T) {
 	waiting := make(chan struct{})
 	go func() {
 		command := "wait"
-		_, err := r.ExecSandbox(waitCtx, "", "fixture", model.SandboxArgs{Command: command}, func(model.CommandOutput) error { close(waiting); return nil })
+		var once sync.Once
+		err := streamTurn(r, waitCtx, command, func(model.CommandOutput) error { once.Do(func() { close(waiting) }); return nil })
 		done <- err
 	}()
 	select {

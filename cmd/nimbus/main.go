@@ -11,6 +11,7 @@ import (
 
 	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/config"
 	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/executor"
+	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/sandbox"
 	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/server"
 	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/store"
 	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/web"
@@ -31,7 +32,11 @@ func main() {
 		}
 		defer db.Close()
 		frontend, _ := fs.Sub(web.Dist, "dist")
-		srv, e := server.New(c, db, frontend, runtime)
+		sandboxes, e := sandbox.New(c.E2BKey)
+		if e != nil {
+			return e
+		}
+		srv, e := server.New(c, db, frontend, runtime, sandboxes)
 		if e != nil {
 			return e
 		}

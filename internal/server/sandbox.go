@@ -56,9 +56,9 @@ func (s *Server) ensureSandbox(ctx context.Context, sid string) (model.Sandbox, 
 	defer cancel()
 	var info model.SandboxInfo
 	if sb.ID != "" && sb.State != "killed" {
-		info, err = s.R.ConnectSandbox(opCtx, s.C.E2BKey, sb.E2bSandboxID)
+		info, err = s.Sandboxes.Connect(opCtx, sb.E2bSandboxID)
 	} else {
-		info, err = s.R.CreateSandbox(opCtx, s.C.E2BKey, s.S.Get("e2b_template", s.C.E2BTemplate), sid)
+		info, err = s.Sandboxes.Create(opCtx, s.S.Get("e2b_template", s.C.E2BTemplate), sid)
 	}
 	if err != nil {
 		message := s.redact(err.Error())
@@ -82,7 +82,7 @@ func (s *Server) ensureSandbox(ctx context.Context, sid string) (model.Sandbox, 
 	if err != nil {
 		cleanup, stop := context.WithTimeout(context.WithoutCancel(ctx), 60*time.Second)
 		defer stop()
-		_ = s.R.KillSandbox(cleanup, s.C.E2BKey, info.SandboxID)
+		_ = s.Sandboxes.Kill(cleanup, info.SandboxID)
 		return sb, err
 	}
 	s.sandboxErrors.Delete(sid)
@@ -99,7 +99,7 @@ func (s *Server) pause(ctx context.Context, sid string) error {
 	}
 	opCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
-	if err = s.R.PauseSandbox(opCtx, s.C.E2BKey, sb.E2bSandboxID); err != nil {
+	if err = s.Sandboxes.Pause(opCtx, sb.E2bSandboxID); err != nil {
 		return err
 	}
 	return s.S.UpdateSandbox(ctx, sb.ID, store.SandboxChanges{State: ptr("paused"), Error: ptr("")})
@@ -140,7 +140,7 @@ func (s *Server) reaper() {
 					}
 					ctx, cancel := context.WithTimeout(s.ctx, 60*time.Second)
 					defer cancel()
-					info, err := s.R.SandboxInfo(ctx, s.C.E2BKey, sb.E2bSandboxID)
+					info, err := s.Sandboxes.Info(ctx, sb.E2bSandboxID)
 					if err == nil && (info.State == "paused" || info.State == "running" || info.State == "killed") {
 						_ = s.S.UpdateSandbox(ctx, sb.ID, store.SandboxChanges{State: &info.State, Info: &info})
 					}
@@ -194,16 +194,16 @@ func (s *Server) executeTool(ctx context.Context, scope toolScope, in model.Tool
 	defer cancel()
 	switch in.Name {
 	case "sandbox_exec":
-		result, err := s.R.ExecSandbox(ctx, s.C.E2BKey, sb.E2bSandboxID, in.Sandbox, func(output model.CommandOutput) error {
+		result, err := s.Sandboxes.Exec(ctx, sb.E2bSandboxID, in.Sandbox, func(output model.CommandOutput) error {
 			frame := model.StreamFrame{SessionID: scope.SessionID, TurnID: scope.TurnID, Payload: model.FramePayload{Type: "tool-output", CallID: in.CallID, Channel: output.Channel, Text: output.Text}, CreatedAt: time.Now()}
 			return s.S.CreateFrame(ctx, store.StreamFrame(frame))
 		})
 		return model.ToolResult{Command: &result}, err
 	case "sandbox_read_file":
-		result, err := s.R.ReadSandboxFile(ctx, s.C.E2BKey, sb.E2bSandboxID, in.Sandbox.Path)
+		result, err := s.Sandboxes.ReadFile(ctx, sb.E2bSandboxID, in.Sandbox.Path)
 		return model.ToolResult{ReadFile: &result}, err
 	case "sandbox_write_file":
-		result, err := s.R.WriteSandboxFile(ctx, s.C.E2BKey, sb.E2bSandboxID, in.Sandbox.Path, in.Sandbox.Content)
+		result, err := s.Sandboxes.WriteFile(ctx, sb.E2bSandboxID, in.Sandbox.Path, in.Sandbox.Content)
 		return model.ToolResult{WriteFile: &result}, err
 	default:
 		return model.ToolResult{}, fmt.Errorf("unknown sandbox operation")

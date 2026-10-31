@@ -1,19 +1,21 @@
 # 实际验收记录
 
-本记录对应 2026-10-31 在这台 macOS 机器上的运行结果。使用当前目录提供的真实 DeepSeek / E2B 凭据；凭据未写入代码或测试输出。
+本记录覆盖 2026-10-31 至 2026-11-01 在这台 macOS 机器上的运行结果。使用当前目录提供的真实 DeepSeek / E2B 凭据；凭据未写入代码或测试输出。
 
 | 项目 | 实际结果 |
 | --- | --- |
-| 独立 runtime 包 | `make pack-runtime` 生成 npm tarball，在仓库外的全新目录安装；无 Harness 路径配置，CLI 版本与 RPC preflight 成功；Go 使用该安装完整通过真实常驻服务及图片端到端验证 |
+| 独立 runtime 包 | `make pack-runtime` 生成 0.3.0 tarball；核对产物使用协议 v3，包含生成后的 SDK/schema，没有 E2B npm 依赖或残留 e2b.js / terminal.js；本地服务与真实常驻进程、图片端到端验证通过 |
 | 按需生成 | 删除两端生成目录与 TS 编译产物后直接 `make` 成功；`make test` 自动生成并运行 19 项 JS/TS 测试和 Go race / PostgreSQL 集成测试；Git 未跟踪生成代码、dist 或 tarball |
 | 编译与静态检查 | 前端 TypeScript / Vite 构建、Go 构建、`go test ./...`、`go vet ./...` 通过 |
 | Wasm 隔离 | 9 项自动检查通过：TypeScript 与 SDK、无限循环中断、禁止 Node import、异步错误、悬空 Promise 截止时间、256 MiB 内存上限、ToolCallError 类型，以及等待评审不占执行时间、等待期间 CPU 限制与取消仍有效 |
 | 前端类型边界 | HTTP / SSE / WebSocket 使用明确的事件、帧、设置、MCP 模型；工具参数与结果在入口归一化，组件不使用 `any` 或二次 JSON 解析；自动测试覆盖原生 PTC 关联、失败结果和异常字段 |
 | 类型与 DAO 边界 | GORM / SQL 只在 DAO；独立持久化 / 业务模型。隔离 schema 测试覆盖 typed JSONB、false 更新、错误类型在 DAO 拒绝、事务回滚、preset 约束，以及原生事件 / OAuth 扩展字段无损保存；架构测试防止业务层重新引入 DB 访问和晚期解码 |
-| 常驻 Node / RPC | 真实多轮保持相同 PID；MCP、E2B、图片和 PTY 共用服务；工作线程复用、两端 SDK 的 Content-Length 协议、schema 校验、请求取消、崩溃替换、大体积结果与嵌套回调自动测试通过 |
+| 常驻 Node / RPC | 真实多轮保持相同 PID；MCP、图片复用 Node；E2B 和 PTY 已迁入 Go；工作线程复用、两端 SDK 的 Content-Length 协议、schema 校验、请求取消、崩溃替换、大体积结果与嵌套回调自动测试通过 |
 | Node 故障恢复 | 对真实输出中的 Node 子进程 SIGKILL，Go 自动拉起新 PID；流式输出逐项保持，活动轮次与待评审中断，新 turn 恢复；空闲 Node 被杀也主动重启。测试只创建并删除自己的会话 |
 | 并发与停止 | 一个 PTC 会话停在 Plan 评审时，另一会话完成对话并恢复历史；停止评审会话保持 Node PID，不影响其他请求。工作线程测试验证卡死线程单独回收 |
 | 普通对话 | 真实模型返回、增量持久化；没有创建沙箱 |
+| Go E2B 适配层 | 真实 E2B：创建时 timeout-to-pause、文件写读、中文命令输出、stdout/stderr、非零退出码、取消、PTY resize/input/output/close、暂停查询不唤醒、恢复后文件保留；测试不启动 Node |
+| 终端独立于 runtime | Chrome 与 WebSocket 保持连接期间，对空闲 Node 先 SIGSTOP 再 SIGKILL；期间仍可输入输出，自动重启后同一 shell 环境变量保留；中文、resize、Ctrl-C 均通过 |
 | E2B / 网页终端 | 真实模型写入 `/workspace/nimbus-proof.txt`；WebSocket PTY 读取到 `NIMBUS_E2B_OK` |
 | 暂停和恢复 | 暂停后历史可读且不唤醒；恢复后 E2B ID、文件内容保持不变 |
 | 无效模板 | E2B 明确返回失败，页面 API 显示异常；没有写入占位沙箱或伪造 E2B ID |
@@ -55,6 +57,7 @@ node scripts/e2e.mjs
 node scripts/features-e2e.mjs
 node scripts/invariants-e2e.mjs
 node scripts/runtime-e2e.ts
+node scripts/terminal-e2e.ts
 node scripts/recovery-e2e.mjs
 node scripts/browser-check.mjs
 node scripts/session-updates-e2e.mjs
@@ -71,6 +74,8 @@ go vet ./...
 
 `npm test` 共 19 项，还验证运行时在加载 Harness 前拒绝不一致的会话 preset 与旧模型名、超过管道缓冲区的大体积 MCP 工具目录和结果传输，以及工具调用树关联、重放、退出码与待完成状态。`scripts/plan-e2e.mjs` 使用本机 Chrome，只回答其自身创建的测试会话，并在退出时删除这些会话。`scripts/tool-ui-check.mjs` 使用浏览器内模拟事件，不调用真实模型，也不修改现有会话。
 
+`internal/sandbox` 的 Go 集成测试通过 `NIMBUS_TEST_E2B_KEY` 选择性启用真实 E2B，创建并删除自己的沙箱。`scripts/terminal-e2e.ts` 在现有用户会话都空闲时才中断 Node，使用本机 Chrome，并清理自己的会话和沙箱。
+
 `internal/runtimeprotocol` 通过真实 SDK 测试请求 / 返回 schema、缺失字段和断连回调清理；`internal/executor` 的 Go race 测试覆盖 12 个并发大消息、反向回调内再次请求 Node、输出确认顺序、单请求与单工具取消、活动 / 空闲崩溃后的主动重启，以及关闭后不重启。`scripts/runtime-e2e.ts` 使用真实 Flash / DSH / E2B 检查常驻 PID、多会话 Plan 等待、Stop、Node SIGKILL 恢复、持久化输出、Wasm 工具调用和 PTY。
 
 MCP 需要另一个终端先运行 `node scripts/mcp-fixture.mjs`，再执行 `node scripts/mcp-e2e.mjs`。这些检查会调用真实模型 / 沙箱，产生相应使用量。恢复测试会主动结束并重新启动本地服务。测试脚本应在专用开发实例运行。
@@ -84,6 +89,6 @@ MCP 需要另一个终端先运行 `node scripts/mcp-fixture.mjs`，再执行 `n
 - E2B 单次同步命令当前最多执行 55 秒、输出上限 1 MiB；长任务可以在沙箱内启动后台进程，再轮询日志。沙箱内容不备份到 Mac，销毁后不能恢复。
 - OAuth 已通过协议测试，也使用用户已有 Notion 授权完成了真实只读调用；没有自动执行第三方登录。第三方服务是否要求预注册 OAuth 客户端、是否接受本机 HTTP 回调，取决于该服务策略。
 - 没有压测 20 个真实并发沙箱或等待完整一小时来测试云端暂停。容量锁、等待、近到期暂停与 E2B onTimeout=pause 已实现。
-- 依赖审计：前端 0 项；运行时 0 high / critical，当前工作区生产依赖审计为 3 项 moderate，来自 E2B 的 glob / minimatch 依赖链。Nimbus 不使用其模板构建或本机 glob API。没有为了消除报告而降级 E2B 或强制替换不兼容的大版本。
+- E2B 使用固定版本的社区 Go SDK，隔离在 `internal/sandbox`；没有官方 Go SDK 的假设。SDK 不提供按 ID 的无唤醒生命周期接口，因此在同一适配层补充有类型的 info/pause/delete HTTP 调用。Node 已移除 E2B npm 依赖及其相关依赖链；当前 `npm audit --omit=dev` 为 0 项，前端安装审计也为 0 项。
 
 测试截图和运行日志保存在被 Git 忽略的 `.local/` 目录。正常交付时测试用 MCP 配置和临时 Skill 会删除，保留一段可查看的 E2B 验证对话及其已暂停沙箱。

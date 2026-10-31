@@ -10,7 +10,7 @@ All paths below are relative to `http://127.0.0.1:8080/api`. Nimbus is a single-
 {"ok":true,"runtime":{"state":"running","pid":12345,"generation":1}}
 ```
 
-The PID remains stable across turns, MCP/E2B calls, image uploads and terminal connections. `state` is `running`, `restarting` or `stopped`; a restart increments `generation` within the current Go process lifetime. `ok` indicates the Go HTTP service is alive, so inspect `runtime.state` separately. Internal tool dispatch uses the separately installed `nimbus-agent-runtime` package through SDK-based JSON-RPC 2.0 on stdio (Content-Length framing, protocol v2); the old `/internal/tools` HTTP route is removed.
+The Node PID remains stable across turns, MCP calls and image uploads. E2B operations and terminal connections are owned by Go and do not require Node. `state` is `running`, `restarting` or `stopped`; a restart increments `generation` within the current Go process lifetime. `ok` indicates the Go HTTP service is alive, so inspect `runtime.state` separately. Internal tool dispatch uses the separately installed `nimbus-agent-runtime` package through SDK-based JSON-RPC 2.0 on stdio (Content-Length framing, protocol v3); the old `/internal/tools` HTTP route is removed.
 
 ## Sessions and options
 
@@ -114,3 +114,12 @@ An invalid or incomplete answer returns `400`, a question belonging to another s
 On reconnect, `Last-Event-ID` takes precedence over `after_seq`. Native events replay after that sequence. Frames replay separately and are deduplicated by ID in the browser. `GET /sessions/:id/events?after_seq=-1` supplies initial paginated history, outbox, frames, questions, and `has_more`; the UI then opens the session stream.
 
 Both streams send the comment `: heartbeat` every **5 seconds**, independently of content delivery. Heartbeats have no event ID and are not messages. The server uses one shared PostgreSQL LISTEN connection and fans changes out by session; there is no periodic SSE data query. Notification bursts are coalesced for 25 ms. Listener reconnects trigger cursor-based catch-up, while each browser reconnect receives a current snapshot. Heartbeat ticks do not query the database. Image bytes are fetched through their image URLs, never included as base64 in stream snapshots.
+
+## Web terminal
+
+`GET /api/sessions/:id/terminal` upgrades to WebSocket after validating that the session owns a running sandbox. Go creates and owns the E2B PTY directly; runtime RPC and SSE are not involved. The existing wire format is unchanged:
+
+- Browser → Go: `{type:"input", data:"<base64 UTF-8 bytes>"}` or `{type:"resize", cols, rows}`.
+- Go → browser: `{ready:true}`, `{data:"<base64 terminal bytes>"}`, or `{error:"message"}`.
+
+Each connection gets a fresh root shell in `/workspace`. Resize is bounded to 2–500 columns and 2–200 rows. Node crash/restart does not close the WebSocket or PTY. Browser disconnect and graceful Go shutdown close the remote PTY; reconnect starts a new shell without replay. Input activity writes are limited to once per five seconds per connection. Terminal output is transient and is not persisted in PostgreSQL.

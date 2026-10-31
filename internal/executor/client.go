@@ -36,13 +36,10 @@ type ImageOutput struct {
 	Ref  model.ImageRef
 	Data []byte
 }
-type TerminalInput struct{ TerminalID, APIKey, SandboxID string }
 type callbacks struct {
 	event    func(model.TurnEvent) error
 	question func(context.Context, model.QuestionRequest) (model.QuestionAnswer, error)
 	tool     func(context.Context, model.ToolCall) (model.ToolResult, error)
-	command  func(model.CommandOutput) error
-	terminal func(model.TerminalOutput) error
 }
 type scope struct {
 	ctx       context.Context
@@ -73,9 +70,9 @@ func (r *Runtime) Check(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	info, err := c.client.Check(ctx, generated.CheckRequest{ProtocolVersion: 2})
-	if err == nil && (info.ProtocolVersion != 2 || info.Name != "nimbus-agent-runtime") {
-		return errors.New("incompatible nimbus-agent-runtime; install a protocol v2 release")
+	info, err := c.client.Check(ctx, generated.CheckRequest{ProtocolVersion: 3})
+	if err == nil && (info.ProtocolVersion != 3 || info.Name != "nimbus-agent-runtime") {
+		return errors.New("incompatible nimbus-agent-runtime; install a protocol v3 release")
 	}
 	return err
 }
@@ -120,7 +117,7 @@ func (r *Runtime) MCP(ctx context.Context, input MCPInput) (model.MCPResult, err
 	if err != nil {
 		return model.MCPResult{}, err
 	}
-	wire, err := c.client.Mcp(ctx, generated.MCPRequest{Op: generated.MCPRequestOp(input.Op), URL: input.URL, CallbackURL: input.CallbackURL, OauthData: &oauth, Args: &generated.MCPArguments{Name: optional(input.Args.Name), Code: optional(input.Args.Code), Arguments: arguments}})
+	wire, err := c.client.Mcp(ctx, generated.MCPRequest{Op: generated.Op(input.Op), URL: input.URL, CallbackURL: input.CallbackURL, OauthData: &oauth, Args: &generated.MCPArguments{Name: optional(input.Args.Name), Code: optional(input.Args.Code), Arguments: arguments}})
 	if err != nil {
 		return model.MCPResult{}, err
 	}
@@ -141,24 +138,6 @@ func (r *Runtime) Images(ctx context.Context, input ImageRequest) (ImageOutput, 
 	}
 	data, err := base64.StdEncoding.DecodeString(result.Data)
 	return ImageOutput{Ref: ref, Data: data}, err
-}
-func (r *Runtime) Terminal(ctx context.Context, input TerminalInput, onOutput func(model.TerminalOutput) error) error {
-	c, err := r.acquire(ctx)
-	if err != nil {
-		return err
-	}
-	id, release := r.bind(ctx, c, callbacks{terminal: onOutput})
-	defer release()
-	_, err = c.client.Terminal(ctx, generated.TerminalRequest{OperationID: id, TerminalID: input.TerminalID, APIKey: input.APIKey, SandboxID: input.SandboxID})
-	return err
-}
-func (r *Runtime) TerminalWrite(ctx context.Context, id string, message model.TerminalMessage) error {
-	c, err := r.acquire(ctx)
-	if err != nil {
-		return err
-	}
-	_, err = c.client.TerminalWrite(ctx, generated.TerminalWriteRequest{TerminalID: id, Message: generated.TerminalMessage{Type: generated.Type(message.Type), Data: optional(message.Data), Rows: &message.Rows, Cols: &message.Cols}})
-	return err
 }
 
 type controlReceiver struct{ r *Runtime }
@@ -262,27 +241,5 @@ func (c controlReceiver) Tool(ctx context.Context, input generated.ToolRequest) 
 		}
 		raw, err := encodeToolResult(result)
 		return generated.ExternalResult{Value: raw}, err
-	})
-}
-func (c controlReceiver) Output(ctx context.Context, input generated.OutputRequest) (generated.SuccessResult, error) {
-	return withScope(c, ctx, input.OperationID, func(_ context.Context, cb callbacks) (generated.SuccessResult, error) {
-		var err error
-		switch {
-		case cb.command != nil:
-			var chunk model.CommandOutput
-			err = json.Unmarshal(input.Data, &chunk)
-			if err == nil {
-				err = cb.command(chunk)
-			}
-		case cb.terminal != nil:
-			var chunk model.TerminalOutput
-			err = json.Unmarshal(input.Data, &chunk)
-			if err == nil {
-				err = cb.terminal(chunk)
-			}
-		default:
-			err = errors.New("unexpected runtime output")
-		}
-		return generated.SuccessResult{Ok: err == nil}, err
 	})
 }
