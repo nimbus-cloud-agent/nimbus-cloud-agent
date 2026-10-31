@@ -3,7 +3,7 @@ import { readFile, realpath } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { Context } from "@deepseek-ai/cordis";
-import { WasmRuntime } from "./wasm.mjs";
+import { WasmRuntime, createHumanWaitClock } from "./wasm.mjs";
 const lines = createInterface({ input: process.stdin });
 const iterator = lines[Symbol.asyncIterator]();
 const input = JSON.parse((await iterator.next()).value);
@@ -12,7 +12,7 @@ const acks = new Map();
 (async () => {
   for await (const line of iterator) {
     const m = JSON.parse(line);
-    acks.get(m.ack)?.();
+    acks.get(m.ack)?.(m.response);
     acks.delete(m.ack);
   }
   process.exit(1);
@@ -98,6 +98,22 @@ try {
       text: input.recovery,
       interpolate: false,
     });
+  const mcpStatus = new Map();
+  for (const t of input.mcp ?? []) {
+    const name = t.server ?? "MCP";
+    const status = mcpStatus.get(name) ?? { server: name, tools: 0 };
+    if (t.error) status.error = t.error;
+    else status.tools++;
+    mcpStatus.set(name, status);
+  }
+  ctx.systemPrompt.section({
+    name: "nimbus-mcp-status",
+    order: 85,
+    text:
+      "External integrations are provided by registered MCP tools; OAuth credentials stay on the control plane and are intentionally absent from the E2B sandbox. Use available MCP tools to access connected services. Do not infer missing authorization from sandbox environment variables or an unauthenticated curl request. Never ask the user to paste integration tokens into chat; use Settings → MCP for authorization. If discovery failed, report the specific server and error and direct the user to its connection test instead of claiming no integration is configured. Current enabled MCP discovery results (tools become available at the start of each new turn):\n" +
+      JSON.stringify([...mcpStatus.values()]),
+    interpolate: false,
+  });
   await mount("dsh-deepseek-llm-api-extensions");
   await mount("dsh-llm-deepseek-api-key", {
     apiKeyEnv: "DEEPSEEK_API_KEY",
@@ -238,10 +254,36 @@ try {
     });
   }
   await mount("dsh-agent-loop", { agents: [], maxParallelToolCalls: 1 });
+  const { UserQuestionError } = await mount("dsh-user-questions");
+  const humanWait = createHumanWaitClock();
+  ctx.provide("nimbusHumanWait", humanWait);
+  ctx.on(
+    "user-questions/request",
+    async (request) => {
+      await chain;
+      if (request.signal?.aborted)
+        throw new UserQuestionError("Review interrupted", "ASK_ABORTED");
+      const resume = humanWait.pause();
+      try {
+        const answer = await emit("question", { questions: request.questions });
+        if (request.signal?.aborted)
+          throw new UserQuestionError("Review interrupted", "ASK_ABORTED");
+        if (answer?.dismissed)
+          throw new UserQuestionError(
+            "User deferred plan review",
+            "ASK_CANCELLED",
+          );
+        return answer;
+      } finally {
+        resume();
+      }
+    },
+    { global: true },
+  );
   // Native plan provider, without host fs/bash/sandbox or Node PTC providers.
   await mount("dsh-plan-mode", {
     section:
-      "Plan mode is active. Investigate the task and produce a clear implementation plan. You may write plan documents into the E2B sandbox. No additional execution restrictions apply.",
+      "Plan mode is active. Investigate the task and produce a clear implementation plan. You may write plan documents into the E2B sandbox. Submit the complete Markdown plan with exit_plan_mode for human review. Wait for approval before implementing the plan; if the user asks for revisions, revise and submit again. No additional tool execution restrictions apply.",
   });
   if (input.session_mode === "ptc") {
     await ctx.plugin(WasmRuntime).await();

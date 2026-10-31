@@ -185,6 +185,8 @@ func (s *Server) runTurn(ctx context.Context, o store.Outbox) {
 			return fmt.Errorf("%s", msg)
 		}
 		return nil
+	}, func(raw json.RawMessage) (json.RawMessage, error) {
+		return s.waitQuestion(ctx, o, raw)
 	})
 }
 

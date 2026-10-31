@@ -1,79 +1,37 @@
 import {
   Cloud,
-  TerminalSquare,
   Check,
   AlertCircle,
   LoaderCircle,
-  Braces,
   BrainCircuit,
-  FilePenLine,
-  FileText,
-  BookOpen,
-  Plug,
 } from "lucide-react";
 import { Button } from "@heroui/react";
-import Markdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import Rich from "./Rich";
+import PlanReview from "./PlanReview";
+import PlanReviewRetry from "./PlanReviewRetry";
 import { Fold } from "./components";
-import { api, type Event, type Outbox } from "./api";
+import { api, type Event, type Outbox, type UserQuestion } from "./api";
 import ImageGallery from "./ImageGallery";
-const text = (content: any) =>
-  Array.isArray(content)
-    ? content
-        .filter((x) => x.type === "text")
-        .map((x) => x.text)
-        .join("")
-    : typeof content === "string"
-      ? content
-      : "";
+import { ToolCall, ExecutionProcess } from "./ToolCalls";
+import {
+  buildToolTree,
+  flattenTools,
+  contentText as text,
+} from "./tool-events";
 
-function toolInfo(data: any) {
-  const name = data.name ?? data.toolName ?? data.call?.name ?? "tool";
-  let args: any = {};
-  try {
-    args =
-      typeof data.arguments === "string"
-        ? JSON.parse(data.arguments)
-        : (data.arguments ?? {});
-  } catch {}
-  const labels: Record<string, [string, typeof Cloud]> = {
-    sandbox_start: ["启动云端沙箱", Cloud],
-    sandbox_status: ["查看沙箱状态", Cloud],
-    sandbox_exec: ["运行命令", TerminalSquare],
-    sandbox_write_file: ["写入文件", FilePenLine],
-    sandbox_read_file: ["读取文件", FileText],
-    skill_read: ["读取技能", BookOpen],
-    run_code: ["运行代码", Braces],
-  };
-  const [label, Icon] = labels[name] ?? [
-    name.startsWith("mcp__") ? "调用外部工具" : name,
-    Plug,
-  ];
-  return {
-    label,
-    Icon,
-    detail: args.path ?? args.command ?? args.description ?? args.name ?? "",
-    name,
-  };
-}
-export function Rich({ children }: { children: string }) {
-  return (
-    <div className="markdown">
-      <Markdown remarkPlugins={[remarkGfm]}>{children}</Markdown>
-    </div>
-  );
-}
 export default function Conversation({
   sessionId,
   events,
   outbox,
   frames,
+  questions,
   retryError,
 }: {
   sessionId: string;
   events: Event[];
   outbox: Outbox[];
   frames: any[];
+  questions: UserQuestion[];
   retryError: (s: string) => void;
 }) {
   return (
@@ -115,6 +73,18 @@ export default function Conversation({
         const calls = rows.filter((e) => e.type === "tool/call");
         const results = rows.filter((e) => e.type === "tool/result");
         const assistants = rows.filter((e) => e.type === "assistant/message");
+        const failedReview = [...rows]
+          .reverse()
+          .find(
+            (e) =>
+              e.type === "tool/ptc-dispatch" &&
+              e.payload.data.name === "exit_plan_mode" &&
+              e.payload.data.isError &&
+              typeof e.payload.data.arguments?.plan === "string" &&
+              text(e.payload.data.content).includes(
+                "no user-questions channel is available",
+              ),
+          );
         const unresolved = [...streams.values()].filter(
           (st) =>
             !assistants.some(
@@ -123,6 +93,98 @@ export default function Conversation({
                 (e.payload.data.step === st.step &&
                   e.payload.data.turn === st.turn),
             ),
+        );
+        const tools = buildToolTree(
+          rows,
+          frames.filter((f) => f.turn_id === o.turn_id),
+        );
+        const allTools = flattenTools(tools);
+        const bySeq = new Map(tools.map((tool) => [tool.seq, tool]));
+        const lastToolSeq = Math.max(-1, ...allTools.map((t) => t.seq));
+        const finalMessage = [...assistants]
+          .reverse()
+          .find(
+            (e) => e.seq > lastToolSeq && text(e.payload.data.message.content),
+          );
+        const pendingReviews = questions.filter(
+          (q) => q.turn_id === o.turn_id && q.status === "pending",
+        );
+        const waiting = new Set(
+          pendingReviews.flatMap((q) =>
+            q.questions
+              .map((item) => item.intent?.callId)
+              .filter((id): id is string => !!id),
+          ),
+        );
+        const turnEnd = rows.find((e) => e.type === "turn/end");
+        const started = events.find(
+          (e) =>
+            e.type === "turn/start" &&
+            e.payload.data.turn === turnEnd?.payload.data.turn,
+        );
+        const duration =
+          started && turnEnd
+            ? (turnEnd.payload.time - started.payload.time) / 1000
+            : undefined;
+        const processContent = (
+          <>
+            {rows
+              .filter((e) => e.type === "assistant/message" || bySeq.has(e.seq))
+              .map((e) => {
+                const tool = bySeq.get(e.seq);
+                if (tool)
+                  return (
+                    <ToolCall
+                      key={tool.id}
+                      node={tool}
+                      settled={!!o.outcome}
+                      waiting={waiting}
+                    />
+                  );
+                const content = e.payload.data.message.content;
+                const reasoning = content
+                  ?.filter((b: any) => b.type === "reasoning")
+                  .map((b: any) => b.text ?? b.reasoning)
+                  .join("");
+                return (
+                  <div key={e.seq}>
+                    {reasoning && (
+                      <Fold
+                        className="reasoning-fold"
+                        title={
+                          <span className="reasoning-label">
+                            <BrainCircuit size={15} />
+                            思考过程
+                          </span>
+                        }
+                      >
+                        <Rich>{reasoning}</Rich>
+                      </Fold>
+                    )}
+                    {e !== finalMessage && text(content) && (
+                      <Rich>{text(content)}</Rich>
+                    )}
+                  </div>
+                );
+              })}
+            {unresolved.map(
+              (st, j) =>
+                st.reasoning && (
+                  <Fold
+                    key={j}
+                    className="reasoning-fold"
+                    title={
+                      <span className="reasoning-label">
+                        <BrainCircuit size={15} />
+                        思考过程
+                      </span>
+                    }
+                  >
+                    <Rich>{st.reasoning}</Rich>
+                  </Fold>
+                ),
+            )}
+          </>
         );
         return (
           <section className="turn" key={o.id}>
@@ -165,155 +227,46 @@ export default function Conversation({
                 <strong>Nimbus</strong>
                 <span>云端 Agent</span>
               </div>
-              {rows
-                .filter((e) =>
-                  [
-                    "assistant/message",
-                    "tool/call",
-                    "tool/ptc-dispatch",
-                  ].includes(e.type),
-                )
-                .map((e) => {
-                  const d = e.payload.data;
-                  if (e.type === "assistant/message") {
-                    const m = d.message;
-                    const reasoning = m.content
-                      ?.filter((b: any) => b.type === "reasoning")
-                      .map((b: any) => b.text ?? b.reasoning)
-                      .join("");
-                    return (
-                      <div key={e.seq}>
-                        {reasoning && (
-                          <Fold
-                            className="reasoning-fold"
-                            title={
-                              <span className="reasoning-label">
-                                <BrainCircuit size={17} />
-                                思考过程
-                              </span>
-                            }
-                          >
-                            <Rich>{reasoning}</Rich>
-                          </Fold>
-                        )}
-                        {text(m.content) && <Rich>{text(m.content)}</Rich>}
-                      </div>
-                    );
-                  }
-                  if (e.type === "tool/ptc-dispatch")
-                    return (
-                      <Fold
-                        className="reasoning-fold"
-                        key={e.seq}
-                        title={
-                          <span className="tool-title">
-                            <Braces size={17} />
-                            查看代码中的工具调用
-                          </span>
-                        }
-                      >
-                        <pre>{JSON.stringify(d, null, 2)}</pre>
-                      </Fold>
-                    );
-                  const result = results.find(
-                    (r) =>
-                      (r.payload.data.callId ??
-                        r.payload.data.message?.toolCallId ??
-                        r.payload.data.id) === (d.callId ?? d.id),
-                  );
-                  const { label, Icon, detail } = toolInfo(d);
-                  const failed =
-                    result?.payload.data.isError ||
-                    result?.payload.data.message?.isError;
-                  return (
-                    <div className="tool-card" key={e.seq}>
-                      <Fold
-                        title={
-                          <span className="tool-title">
-                            <span className="tool-icon">
-                              <Icon size={18} />
-                            </span>
-                            <span className="tool-copy">
-                              <strong>{label}</strong>
-                              {detail && (
-                                <code title={String(detail)}>
-                                  {String(detail)}
-                                </code>
-                              )}
-                            </span>
-                            {failed ? (
-                              <span className="tool-status failed">
-                                <AlertCircle size={15} />
-                                失败
-                              </span>
-                            ) : result ? (
-                              <span className="tool-status">
-                                <Check size={15} />
-                                完成
-                              </span>
-                            ) : (
-                              <LoaderCircle size={13} className="spin" />
-                            )}
-                          </span>
-                        }
-                      >
-                        <pre>{JSON.stringify(d, null, 2)}</pre>
-                        {!result &&
-                          frames.some(
-                            (f) =>
-                              f.turn_id === o.turn_id &&
-                              f.payload.type === "tool-output" &&
-                              f.payload.callId === d.callId,
-                          ) && (
-                            <pre>
-                              {frames
-                                .filter(
-                                  (f) =>
-                                    f.turn_id === o.turn_id &&
-                                    f.payload.type === "tool-output" &&
-                                    f.payload.callId === d.callId,
-                                )
-                                .map((f) => f.payload.text)
-                                .join("")}
-                            </pre>
-                          )}
-                        {result && (
-                          <pre>
-                            {text(
-                              result.payload.data.message?.content ??
-                                result.payload.data.content ??
-                                result.payload.data.result?.content,
-                            ) || JSON.stringify(result.payload.data, null, 2)}
-                          </pre>
-                        )}
-                      </Fold>
-                    </div>
-                  );
-                })}
-              {unresolved.map((st, j) => (
-                <div key={j}>
-                  {st.reasoning && (
-                    <Fold
-                      className="reasoning-fold"
-                      title={
-                        <span className="reasoning-label">
-                          <BrainCircuit size={17} />
-                          思考过程
-                        </span>
-                      }
-                    >
-                      <Rich>{st.reasoning}</Rich>
-                    </Fold>
-                  )}
-                  {st.text && <Rich>{st.text}</Rich>}
-                </div>
-              ))}
+              {tools.length > 0 ? (
+                <ExecutionProcess
+                  tools={allTools}
+                  outcome={o.outcome}
+                  duration={duration}
+                  waiting={pendingReviews.length > 0}
+                >
+                  {processContent}
+                </ExecutionProcess>
+              ) : (
+                processContent
+              )}
+              {finalMessage && (
+                <Rich>{text(finalMessage.payload.data.message.content)}</Rich>
+              )}
+              {unresolved.map(
+                (st, j) => st.text && <Rich key={j}>{st.text}</Rich>,
+              )}
+              {questions
+                .filter((q) => q.turn_id === o.turn_id)
+                .map((q) => (
+                  <PlanReview key={q.id} sessionId={sessionId} review={q} />
+                ))}
+              {failedReview && o.outcome && i === outbox.length - 1 && (
+                <PlanReviewRetry
+                  sessionId={sessionId}
+                  seq={failedReview.seq}
+                  plan={failedReview.payload.data.arguments.plan}
+                />
+              )}
               {!o.outcome && o.status !== "failed" && (
                 <div className="activity">
                   <span className="pulse" />
-                  {calls.length > results.length
-                    ? "正在执行工具"
-                    : "正在思考与输出"}
+                  {questions.some(
+                    (q) => q.turn_id === o.turn_id && q.status === "pending",
+                  )
+                    ? "等待你确认计划"
+                    : calls.length > results.length
+                      ? "正在执行工具"
+                      : "正在思考与输出"}
                   <span>输出实时保存</span>
                 </div>
               )}

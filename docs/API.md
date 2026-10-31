@@ -1,4 +1,4 @@
-# Session, image, and streaming API
+# Session, image, plan review, and streaming API
 
 All paths below are relative to `http://127.0.0.1:8080/api`. Nimbus is a single-user local application; requests are subject to loopback Host and same-origin checks. JSON errors use `{"error":"message"}`. API keys are configured server-side and must not be sent by the browser with messages.
 
@@ -70,6 +70,23 @@ The response is `202` with the durable outbox row. Reusing `client_msg_id` withi
 
 Outbox status progresses through `queued`, `starting`, and `delivered`; failure before delivery uses `failed`. Native `user/message` persistence determines delivery. A delivered turn separately records `completed`, `interrupted`, or `error` in `outcome`. Only undelivered failures can be retried through `POST /sessions/:id/messages/:outbox/retry`.
 
+## Plan review
+
+When native `exit_plan_mode` requests review, the initial events response and `questions` SSE event contain records with `id`, `session_id`, `turn_id`, `questions`, `status`, `created_at`, and optional `answer` / `resolved_at`. Each question preserves the native `id`, Markdown `detail`, options, and review intent. Status is `pending`, `answered`, `dismissed`, or `interrupted`.
+
+Explicitly approve a pending plan:
+
+```http
+POST /sessions/:id/questions/:question/answer
+Content-Type: application/json
+
+{"answers":[{"id":"plan-review","selected":["Approve"]}]}
+```
+
+To revise, select `Keep planning` and optionally include `custom` with feedback. To defer, send only `{"dismissed":true}`. DSH approval requires exactly `Approve` and no custom feedback. Approval releases the native tool call; DSH turns Plan off at its next accepted step and continues. Revision preserves Plan and returns feedback to the model. Deferral concludes the turn without approval.
+
+An invalid or incomplete answer returns `400`, a question belonging to another session returns `404`, and a conflicting decision or interrupted review returns `409`. Repeating the same accepted answer returns `200`. Browser disconnects do not resolve questions. Stop or backend restart interrupts pending reviews; sending a new message can request resubmission. Native history is not rewritten.
+
 ## EventSource streams
 
 `GET /sessions/stream` immediately emits `event: sessions` with a full list snapshot. It emits another snapshot only when the list or a session's state changes. Every reconnect receives the current full snapshot; no cursor is required.
@@ -82,7 +99,8 @@ Outbox status progresses through `queued`, `starting`, and `delivered`; failure 
 | `state` | Current session view, including `mode_locked` and sandbox state |
 | `outbox` | Current message queue/delivery snapshot and image references |
 | `frame` | Persisted incremental assistant/tool output with its own durable ID |
+| `questions` | Full durable plan-review snapshot, initially and on changes |
 
-On reconnect, `Last-Event-ID` takes precedence over `after_seq`. Native events replay after that sequence. Frames replay separately and are deduplicated by ID in the browser. `GET /sessions/:id/events?after_seq=-1` supplies initial paginated history, outbox, frames, and `has_more`; the UI then opens the session stream.
+On reconnect, `Last-Event-ID` takes precedence over `after_seq`. Native events replay after that sequence. Frames replay separately and are deduplicated by ID in the browser. `GET /sessions/:id/events?after_seq=-1` supplies initial paginated history, outbox, frames, questions, and `has_more`; the UI then opens the session stream.
 
 Both streams send the comment `: heartbeat` every **5 seconds**, independently of content delivery. Heartbeats have no event ID and are not messages. The server checks database changes every 250 ms; the browser keeps EventSource connections instead of issuing periodic session-list GET requests. Image bytes are fetched through their image URLs, never included as base64 in stream snapshots.

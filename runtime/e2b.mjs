@@ -1,5 +1,6 @@
 import { Sandbox } from "e2b";
 import { createInterface } from "node:readline";
+import { writeJSON } from "./protocol.mjs";
 const input = JSON.parse(
   await new Promise((resolve) =>
     createInterface({ input: process.stdin }).once("line", resolve),
@@ -108,12 +109,10 @@ try {
       result = { path: input.args.path, written: true };
     } else throw Error("Unknown E2B operation");
   }
-  console.log(JSON.stringify({ result }));
+  await writeJSON({ result });
 } catch (e) {
-  console.log(
-    JSON.stringify({
-      error: String(e.message).replaceAll(input.api_key, "[REDACTED]"),
-    }),
-  );
+  await writeJSON({
+    error: String(e.message).replaceAll(input.api_key, "[REDACTED]"),
+  });
 }
 process.exit(0);

@@ -62,6 +62,20 @@ export type Outbox = {
   outcome: string;
   delivered_seq?: number;
 };
+export type UserQuestion = {
+  id: string;
+  turn_id: string;
+  status: "pending" | "answered" | "dismissed" | "interrupted";
+  questions: {
+    id: string;
+    question: string;
+    detail?: string;
+    header?: string;
+    options?: { label: string; description?: string }[];
+    intent?: { kind: string; approve: string; callId?: string };
+  }[];
+  answer?: { answers?: { id: string; selected: string[]; custom?: string }[] };
+};
 export const sandboxLabels: Record<string, string> = {
   not_started: "未启动",
   provisioning: "创建 / 唤醒中",

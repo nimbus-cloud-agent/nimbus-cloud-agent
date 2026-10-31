@@ -6,6 +6,26 @@ import {
 import { stripTypeScriptTypes } from "node:module";
 import { PtcRuntime } from "@deepseek-ai/dsh-ptc-runtime";
 
+// Host-only clock: a human review may outlive a PTC execution budget. Never
+// expose it to generated code, and only extend deadlines between VM jobs.
+export function createHumanWaitClock() {
+  let depth = 0,
+    started = 0,
+    total = 0;
+  return {
+    elapsed: () => total + (depth ? performance.now() - started : 0),
+    pause() {
+      if (depth++ === 0) started = performance.now();
+      let resumed = false;
+      return () => {
+        if (resumed) return;
+        resumed = true;
+        if (--depth === 0) total += performance.now() - started;
+      };
+    },
+  };
+}
+
 export class WasmRuntime extends PtcRuntime {
   language = "typescript";
   isolation = "wasm";
@@ -22,11 +42,11 @@ export class WasmRuntime extends PtcRuntime {
     return { ...request, cwd: "/workspace", timeoutMs: ms };
   }
   async run(spec) {
-    return runWasm(spec);
+    return runWasm(spec, this.ctx.get("nimbusHumanWait"));
   }
 }
 
-export async function runWasm(spec) {
+export async function runWasm(spec, humanWait) {
   const memory = new WebAssembly.Memory({ initial: 256, maximum: 4096 });
   const module = await newQuickJSWASMModule(
     newVariant(RELEASE_SYNC, { wasmMemory: memory }),
@@ -37,7 +57,7 @@ export async function runWasm(spec) {
   // Leave room for engine metadata inside the hard 256 MiB linear-memory cap.
   runtime.setMemoryLimit(240 * 1024 * 1024);
   runtime.setMaxStackSize(1024 * 1024);
-  const deadline = Date.now() + (spec.timeoutMs ?? 120_000);
+  let deadline = Date.now() + (spec.timeoutMs ?? 120_000);
   runtime.setInterruptHandler(
     () => Date.now() > deadline || !!spec.signal?.aborted,
   );
@@ -155,10 +175,12 @@ export async function runWasm(spec) {
         settled = state;
         break;
       }
+      const waited = humanWait?.elapsed() ?? 0;
       await Promise.race([
         ...pending,
         new Promise((resolve) => setTimeout(resolve, 2)),
       ]);
+      deadline += (humanWait?.elapsed() ?? 0) - waited;
     }
     if (settled.type === "rejected") {
       const e = vm.dump(settled.error);

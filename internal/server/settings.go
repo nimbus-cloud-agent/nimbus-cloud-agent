@@ -263,12 +263,13 @@ func (s *Server) mcpTools(ctx context.Context, servers []store.MCPServer) []map[
 	for _, x := range servers {
 		d, e := s.mcp(ctx, x, "list", nil)
 		if e != nil {
-			out = append(out, map[string]any{"server": x.Name, "error": e.Error()})
+			out = append(out, map[string]any{"server": x.Name, "error": s.redact(e.Error())})
 			continue
 		}
 		tools, _ := d["tools"].([]any)
 		for _, v := range tools {
 			t := v.(map[string]any)
+			t["server"] = x.Name
 			t["name"] = "mcp__" + strings.ReplaceAll(x.ID, "-", "") + "__" + t["name"].(string)
 			out = append(out, t)
 		}

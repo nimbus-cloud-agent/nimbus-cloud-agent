@@ -1,5 +1,5 @@
 import { Select, ListBox, Label, Switch, Accordion } from "@heroui/react";
-import type { ReactNode } from "react";
+import { useId, useState, type ReactNode } from "react";
 export function Picker({
   label,
   value,
@@ -76,22 +76,44 @@ export function Fold({
   title,
   children,
   className,
+  open,
+  onOpenChange,
+  label,
 }: {
   title: ReactNode;
-  children: ReactNode;
+  children: ReactNode | (() => ReactNode);
   className?: string;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  label?: string;
 }) {
+  const id = useId();
+  const [localOpen, setLocalOpen] = useState(false);
+  const expanded = open ?? localOpen;
   return (
-    <Accordion className={className}>
-      <Accordion.Item>
+    <Accordion
+      className={className}
+      hideSeparator
+      expandedKeys={expanded ? [id] : []}
+      onExpandedChange={(keys) => {
+        const next = keys.has(id);
+        setLocalOpen(next);
+        onOpenChange?.(next);
+      }}
+    >
+      <Accordion.Item id={id}>
         <Accordion.Heading>
-          <Accordion.Trigger>
+          <Accordion.Trigger aria-label={label}>
             {title}
             <Accordion.Indicator />
           </Accordion.Trigger>
         </Accordion.Heading>
         <Accordion.Panel>
-          <Accordion.Body>{children}</Accordion.Body>
+          {expanded && (
+            <Accordion.Body>
+              {typeof children === "function" ? children() : children}
+            </Accordion.Body>
+          )}
         </Accordion.Panel>
       </Accordion.Item>
     </Accordion>

@@ -46,7 +46,7 @@ func (r Runtime) Call(ctx context.Context, name string, input any) (json.RawMess
 }
 
 // Stream messages are acknowledged after their database transaction commits.
-func (r Runtime) Turn(ctx context.Context, input any, onEvent func(string, json.RawMessage) error) error {
+func (r Runtime) Turn(ctx context.Context, input any, onEvent func(string, json.RawMessage) error, onQuestion func(json.RawMessage) (json.RawMessage, error)) error {
 	cmd := r.Command(ctx, "turn")
 	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
 	cmd.WaitDelay = 10 * time.Second
@@ -83,7 +83,13 @@ func (r Runtime) Turn(ctx context.Context, input any, onEvent func(string, json.
 			failure = e
 			break
 		}
-		if e = onEvent(msg.Event, msg.Data); e != nil {
+		var response json.RawMessage
+		if msg.Event == "question" {
+			response, e = onQuestion(msg.Data)
+		} else {
+			e = onEvent(msg.Event, msg.Data)
+		}
+		if e != nil {
 			failure = e
 			break
 		}
@@ -91,7 +97,7 @@ func (r Runtime) Turn(ctx context.Context, input any, onEvent func(string, json.
 			finished = true
 		}
 		if msg.Ack > 0 {
-			if e = enc.Encode(map[string]any{"ack": msg.Ack}); e != nil {
+			if e = enc.Encode(map[string]any{"ack": msg.Ack, "response": response}); e != nil {
 				failure = e
 				break
 			}

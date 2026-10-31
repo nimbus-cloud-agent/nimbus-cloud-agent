@@ -54,6 +54,9 @@ func New(c config.Config, st *store.Store, frontend fs.FS) (*Server, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Server{C: c, S: st, R: executor.Runtime{Dir: c.RuntimeDir}, running: map[string]*runningTurn{}, tokens: map[string]tokenScope{}, ctx: ctx, cancel: cancel, BaseURL: "http://" + c.Addr}
 	if e = st.DB.Transaction(func(tx *gorm.DB) error {
+		if e := interruptQuestions(tx); e != nil {
+			return e
+		}
 		if e := tx.Model(&store.Outbox{}).Where("status = 'starting'").Updates(map[string]any{"status": "failed", "error": "后端重启，本轮尚未送达，请重发", "outcome": "interrupted"}).Error; e != nil {
 			return e
 		}

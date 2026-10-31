@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { runWasm } from "./wasm.mjs";
+import { runWasm, createHumanWaitClock } from "./wasm.mjs";
 test("TypeScript executes inside Wasm and only explicit bindings can cause effects", async () => {
   let calls = 0;
   const r = await runWasm({
@@ -90,4 +90,67 @@ test("PTC SDK rejection preserves ToolCallError identity", async () => {
     ],
   });
   assert.deepEqual(r.value, [true, "fail"]);
+});
+
+test("human review excludes idle waiting without removing the execution deadline", async () => {
+  const clock = createHumanWaitClock();
+  const bindings = [
+    {
+      global: "tools",
+      functions: {
+        review: async () => {
+          const resume = clock.pause();
+          try {
+            await new Promise((r) => setTimeout(r, 150));
+            return "approved";
+          } finally {
+            resume();
+          }
+        },
+      },
+    },
+  ];
+  const accepted = await runWasm(
+    { program: "return await tools.review({});", bindings, timeoutMs: 60 },
+    clock,
+  );
+  assert.equal(accepted.value, "approved");
+  const loop = await runWasm(
+    {
+      program: "await tools.review({}); while(true){}",
+      bindings,
+      timeoutMs: 60,
+    },
+    clock,
+  );
+  assert.equal(loop.error.kind, "timeout");
+});
+
+test("human review cannot shield concurrent CPU loops or cancellation", async () => {
+  const clock = createHumanWaitClock();
+  const resume = clock.pause();
+  try {
+    const loop = await runWasm(
+      { program: "while(true){}", timeoutMs: 50 },
+      clock,
+    );
+    assert.equal(loop.error.kind, "timeout");
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 80);
+    try {
+      const aborted = await runWasm(
+        {
+          program: "await new Promise(()=>{});",
+          timeoutMs: 50,
+          signal: controller.signal,
+        },
+        clock,
+      );
+      assert.equal(aborted.error.kind, "abort");
+    } finally {
+      clearTimeout(timer);
+    }
+  } finally {
+    resume();
+  }
 });

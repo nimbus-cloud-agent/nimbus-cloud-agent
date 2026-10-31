@@ -8,6 +8,7 @@ The current implementation also includes:
 - A session-level Standard/PTC preset, fixed at first message acceptance and enforced through SQL, API, retry, and runtime resume.
 - Session-list and conversation EventSource streams with independent 5-second heartbeats.
 - Refined desktop/mobile layouts, resizable terminal width, adjustable terminal fonts, and a working Plan control.
+- Native plan-review channel and persistent browser cards, with approval, revision feedback, deferral, refresh recovery, interruption handling, and human-wait-aware Wasm execution budgets.
 
 The application builds and runs directly on macOS. Real model, E2B, browser, image recovery, and PostgreSQL migration checks have been completed; detailed evidence is recorded below.
 

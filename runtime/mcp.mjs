@@ -2,6 +2,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { auth } from "@modelcontextprotocol/sdk/client/auth.js";
 import { createInterface } from "node:readline";
+import { writeJSON } from "./protocol.mjs";
 const input = JSON.parse(
   await new Promise((r) =>
     createInterface({ input: process.stdin }).once("line", r),
@@ -78,19 +79,17 @@ try {
 } finally {
   if (client) await client.close().catch(() => {});
 }
-console.log(
-  JSON.stringify({
-    result: {
-      ...result,
-      oauth_data: data,
-      oauth_state: authURL
-        ? "pending"
-        : data.tokens
-          ? "ok"
-          : result.error
-            ? "expired"
-            : "none",
-    },
-  }),
-);
+await writeJSON({
+  result: {
+    ...result,
+    oauth_data: data,
+    oauth_state: authURL
+      ? "pending"
+      : data.tokens
+        ? "ok"
+        : result.error
+          ? "expired"
+          : "none",
+  },
+});
 process.exit(0);

@@ -46,6 +46,14 @@ Standard/PTC is a durable session preset. A PostgreSQL trigger freezes `locked_m
 
 Image uploads are decoded and normalized by DSH's native attachment service in a temporary trusted supervisor. PostgreSQL stores the normalized bytes plus immutable native attachment metadata, scoped to their owning session. Outbox messages retain ordered image references; SSE never carries base64 image bytes. The image route serves bytes only within the same session. Each resumed supervisor hydrates its private attachment cache from PostgreSQL, verifies the content ID, and submits native `image` blocks through the official DeepSeek provider. No filesystem tool or execution-world path is exposed. Deleting a session cascades to its image rows and removes its supervisor work directory.
 
+## Native plan review
+
+`dsh-plan-mode` uses `dsh-user-questions` and a root-scoped `user-questions/request` answerer. The supervisor flushes preceding records and sends a question through its acknowledged stdin/stdout protocol. Go persists the request in `user_questions` (migration 007), publishes it through the selected session's SSE stream, and waits for an explicit browser response. It returns that response in the protocol acknowledgement; native DSH owns approval, revision feedback, dismissal, and the subsequent `plan/mode` transition. Persisting native `active: false` also turns off the session's Plan default. Outbox option snapshots and native history remain unchanged.
+
+Question IDs are scoped to a session and turn. Answer validation checks every question and option; row locking prevents conflicting decisions from multiple tabs, and retries of the same answer are idempotent. Refresh/reconnect recovers the pending card from PostgreSQL. Stop and shutdown interrupt the wait; startup invalidates pending questions left by a crash. Interrupted reviews must be submitted again in a new turn, and are never automatically approved or replayed. Historical missing-channel failures expose an explicit resubmit action that sends the existing plan in a new message.
+
+Only time spent asynchronously waiting on the trusted human-question provider extends a Wasm deadline. The clock is not a generated SDK binding. CPU loops, unrelated unresolved promises, memory limits, and cancellation retain their execution limits. Plan instructions request investigation and review before implementation; this is native planning behavior, not a separate read-only sandbox policy.
+
 ## Isolation and secrets
 
 Public and control routes bind loopback, validate Host, reject cross-origin requests, and use a same-origin WebSocket check. A per-turn random capability binds internal calls to one session. It is never sent to E2B or browser clients.
@@ -55,6 +63,8 @@ The Harness composition does not mount local filesystem, subprocess, bash, jobs,
 PTC source is stripped to JavaScript using Node's TypeScript transformer, then evaluated **only inside QuickJS Wasm**. Each run owns a separate WebAssembly instance with maximum 4096 memory pages (256 MiB). It has no mounted directories, Node globals, environment, arbitrary network, or subprocess capability. Host functions are explicitly generated from the Harness tool registry. Sandbox and MCP dispatch share the same supervised path. API keys and OAuth credentials are absent from program-visible bindings.
 
 The UI returns masked keys and never returns OAuth storage. Credentials are passed to trusted child processes over stdin, not arguments. Skill contents arrive from PostgreSQL into the in-memory provider, never temporary skill files. Model artifacts are written only to E2B.
+
+One-shot supervisors await stdout's write callback before exiting. Pipe writes are asynchronous on macOS, and exiting immediately after `console.log` truncated Notion's large tool catalog at 64 KiB. MCP discovery/call responses, image bytes, and E2B file/output responses share this flushed JSON protocol. Multi-page MCP tool catalogs are assembled before return. Each turn's prompt reports MCP discovery failures and explains that connector authorization belongs to the control plane, not the execution sandbox. The settings connection test reports the discovered tool count separately from saved OAuth status.
 
 ## Runtime and distribution
 

@@ -2,6 +2,7 @@ import { createInterface } from "node:readline";
 import { createRequire } from "node:module";
 import { realpath, readFile } from "node:fs/promises";
 import { runWasm } from "./wasm.mjs";
+import { writeJSON } from "./protocol.mjs";
 try {
   const i = JSON.parse(
     await new Promise((r) =>
@@ -21,8 +22,8 @@ try {
   });
   if (r.error || r.value.some((v) => v !== "undefined"))
     throw Error("Wasm isolation check failed");
-  console.log(JSON.stringify({ result: { version: v, wasm: true } }));
+  await writeJSON({ result: { version: v, wasm: true } });
 } catch (e) {
-  console.log(JSON.stringify({ error: e.message }));
+  await writeJSON({ error: e.message });
 }
 process.exit(0);

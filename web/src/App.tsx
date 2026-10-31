@@ -33,6 +33,7 @@ import {
   type Outbox,
   type Options,
   type MessageImage,
+  type UserQuestion,
 } from "./api";
 import { Picker, Toggle, Fold } from "./components";
 import TerminalPanel from "./Terminal";
@@ -46,6 +47,7 @@ export default function App() {
     [events, setEvents] = useState<Event[]>([]),
     [outbox, setOutbox] = useState<Outbox[]>([]),
     [frames, setFrames] = useState<any[]>([]);
+  const [questions, setQuestions] = useState<UserQuestion[]>([]);
   const [draft, setDraft] = useState(""),
     [error, setError] = useState(""),
     [settings, setSettings] = useState(location.search.includes("settings=")),
@@ -91,6 +93,7 @@ export default function App() {
     setEvents([]);
     setOutbox([]);
     setFrames([]);
+    setQuestions([]);
     setDraftImages([]);
     if (!id) return;
     let active = true;
@@ -106,6 +109,7 @@ export default function App() {
           all = [...all, ...d.events];
           setOutbox(d.outbox);
           setFrames(d.frames ?? []);
+          setQuestions(d.questions ?? []);
           if (!d.has_more) break;
           after = d.events.at(-1).seq;
         }
@@ -129,6 +133,9 @@ export default function App() {
           setSessions((xs) => xs.map((x) => (x.id === v.id ? v : x)));
         });
         source.addEventListener("outbox", (e) => setOutbox(JSON.parse(e.data)));
+        source.addEventListener("questions", (e) =>
+          setQuestions(JSON.parse(e.data)),
+        );
         source.addEventListener("frame", (e) => {
           const v = JSON.parse(e.data);
           setFrames((xs) => (xs.some((x) => x.id === v.id) ? xs : [...xs, v]));
@@ -145,7 +152,7 @@ export default function App() {
   useEffect(() => {
     if (nearBottom.current)
       end.current?.scrollIntoView({ behavior: "instant", block: "end" });
-  }, [events, frames, outbox]);
+  }, [events, frames, outbox, questions]);
   async function newSession() {
     try {
       const s = await api<Session>("/sessions", "POST");
@@ -650,6 +657,7 @@ export default function App() {
                 events={events}
                 outbox={outbox}
                 frames={frames}
+                questions={questions}
                 retryError={setError}
               />
             )}

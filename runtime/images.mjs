@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import { realpath } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { Context } from "@deepseek-ai/cordis";
+import { writeJSON } from "./protocol.mjs";
 let ctx;
 try {
   const input = JSON.parse(
@@ -27,13 +28,11 @@ try {
     name: input.name,
   });
   const saved = await ctx.attachments.readImage(ref);
-  console.log(
-    JSON.stringify({
-      result: { ref, data: Buffer.from(saved.data).toString("base64") },
-    }),
-  );
+  await writeJSON({
+    result: { ref, data: Buffer.from(saved.data).toString("base64") },
+  });
 } catch (error) {
-  console.log(JSON.stringify({ error: error.message }));
+  await writeJSON({ error: error.message });
 } finally {
   await ctx?.fiber.dispose();
 }

@@ -35,7 +35,11 @@ export default function Settings({
   onClose: () => void;
   onError: (s: string) => void;
 }) {
-  const [tab, setTab] = useState("model"),
+  const [tab, setTab] = useState(() =>
+      new URLSearchParams(location.search).get("settings") === "mcp"
+        ? "mcp"
+        : "model",
+    ),
     [key, setKey] = useState(""),
     [configured, setConfigured] = useState(false),
     [template, setTemplate] = useState("base"),
@@ -74,9 +78,9 @@ export default function Settings({
     setFailure("");
     setNotice("");
     try {
-      await fn();
+      const result = await fn();
       await load();
-      setNotice(message);
+      setNotice(typeof result === "string" ? result : message);
     } catch (e) {
       setFailure(String(e));
     } finally {
@@ -453,6 +457,7 @@ export default function Settings({
                   <p className="muted">
                     仅支持 Streamable HTTP。需要登录的服务通过 OAuth
                     授权，凭据由服务端保存和刷新。
+                    “已授权”表示已保存登录凭据；点击“测试”检查工具是否可用，连接变更在下一轮对话生效。
                   </p>
                   {mcps.length === 0 && !mcpEdit && (
                     <p className="settings-empty">
@@ -499,9 +504,7 @@ export default function Settings({
                                 `/mcp/servers/${m.id}/test`,
                                 "POST",
                               );
-                              setNotice(
-                                `连接成功 · ${r.tools?.length ?? 0} 个工具`,
-                              );
+                              return `连接成功 · ${r.tools?.length ?? 0} 个工具`;
                             }, "连通性检查成功")
                           }
                         >

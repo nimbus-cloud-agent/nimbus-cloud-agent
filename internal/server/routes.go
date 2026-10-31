@@ -139,7 +139,7 @@ func (s *Server) routes(r *gin.Engine) {
 		}
 		outbox := []store.Outbox{}
 		s.S.DB.Where("session_id = ?", x.ID).Order("created_at").Find(&outbox)
-		c.JSON(200, gin.H{"events": events, "outbox": outbox, "has_more": len(events) == 1000, "frames": s.frames(x.ID)})
+		c.JSON(200, gin.H{"events": events, "outbox": outbox, "has_more": len(events) == 1000, "frames": s.frames(x.ID), "questions": s.questions(x.ID)})
 	})
 	r.GET("/api/sessions/:id/stream", s.stream)
 	r.POST("/api/sessions/:id/stop", func(c *gin.Context) {
@@ -195,6 +195,7 @@ func (s *Server) routes(r *gin.Engine) {
 	r.GET("/api/sessions/:id/terminal", s.terminal)
 	s.settingsRoutes(r)
 	s.imageRoutes(r)
+	s.questionRoutes(r)
 }
 func (s *Server) message(c *gin.Context) {
 	x, ok := s.session(c)
@@ -316,7 +317,7 @@ func (s *Server) stream(c *gin.Context) {
 	defer tick.Stop()
 	heartbeat := time.NewTicker(streamHeartbeatInterval)
 	defer heartbeat.Stop()
-	lastState, lastOutbox := "", ""
+	lastState, lastOutbox, lastQuestions := "", "", ""
 	var frameAfter int64
 	for {
 		events := []store.Event{}
@@ -344,6 +345,11 @@ func (s *Server) stream(c *gin.Context) {
 		if string(ob) != lastOutbox {
 			fmt.Fprintf(c.Writer, "event: outbox\ndata: %s\n\n", ob)
 			lastOutbox = string(ob)
+		}
+		questions, _ := json.Marshal(s.questions(x.ID))
+		if string(questions) != lastQuestions {
+			fmt.Fprintf(c.Writer, "event: questions\ndata: %s\n\n", questions)
+			lastQuestions = string(questions)
 		}
 		frames := []store.StreamFrame{}
 		s.S.DB.Where("session_id = ? AND id > ?", x.ID, frameAfter).Order("id").Find(&frames)

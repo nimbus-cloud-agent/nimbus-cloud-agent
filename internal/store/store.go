@@ -61,6 +61,17 @@ type Image struct {
 	Data      []byte
 }
 
+type UserQuestion struct {
+	ID         string     `json:"id" gorm:"primaryKey;type:uuid"`
+	SessionID  string     `json:"session_id"`
+	TurnID     string     `json:"turn_id"`
+	Questions  JSON       `json:"questions" gorm:"type:jsonb"`
+	Answer     JSON       `json:"answer,omitempty" gorm:"type:jsonb"`
+	Status     string     `json:"status"`
+	CreatedAt  time.Time  `json:"created_at"`
+	ResolvedAt *time.Time `json:"resolved_at,omitempty"`
+}
+
 type Sandbox struct {
 	ID           string    `json:"id" gorm:"primaryKey;type:uuid"`
 	SessionID    string    `json:"session_id" gorm:"uniqueIndex"`
@@ -165,6 +176,9 @@ func (s *Store) Append(sid, oid string, raw JSON) error {
 	var rec struct {
 		Seq  int64  `json:"seq"`
 		Type string `json:"type"`
+		Data struct {
+			Active *bool `json:"active"`
+		} `json:"data"`
 	}
 	if err := json.Unmarshal(raw, &rec); err != nil {
 		return err
@@ -188,6 +202,12 @@ func (s *Store) Append(sid, oid string, raw JSON) error {
 		}
 		if rec.Type == "user/message" {
 			if e := tx.Model(&Outbox{}).Where("id = ? AND status = 'starting'", oid).Updates(map[string]any{"status": "delivered", "delivered_seq": rec.Seq}).Error; e != nil {
+				return e
+			}
+		}
+		// The native approval transition is also the default for subsequent turns.
+		if rec.Type == "plan/mode" && rec.Data.Active != nil && !*rec.Data.Active {
+			if e := tx.Model(&sess).Update("options", gorm.Expr("jsonb_set(options, '{plan}', 'false')")).Error; e != nil {
 				return e
 			}
 		}
