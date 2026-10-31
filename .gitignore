@@ -3,3 +3,13 @@
 /web/node_modules/
 third_party/deepseek-harness/
 *.log
+deepseekkey
+e2bhobbykey
+.env
+.env.*
+!.env.example
+.local/
+node_modules/
+playwright-report/
+test-results/
+*.tsbuildinfo

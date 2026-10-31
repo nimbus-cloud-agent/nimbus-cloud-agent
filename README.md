@@ -1,122 +1,128 @@
 # Nimbus Cloud Agent
 
-> One session, one cloud VM. An agent you can watch work — and a terminal you can open yourself.
+A local workspace for a DeepSeek agent with an isolated, on-demand E2B cloud sandbox. Runs on **macOS or Linux**; no QEMU, KVM, Docker, or Linux execution host is required.
 
-Nimbus Cloud Agent is a self-hosted, open-source cloud agent system. You open a web page, start a session, and get a Linux virtual machine with an agent working inside it. The agent is powered by the DeepSeek model through the DeepSeek Harness agent loop, and it can only operate inside that session's VM — it cannot escape to the host.
+The Go service serves the React UI at **http://127.0.0.1:8080**. PostgreSQL owns conversations, image attachments, incremental output, settings, Skills, and MCP credentials. DeepSeek Harness runs the agent loop; commands and generated files stay in E2B.
 
-**Status: early demo / scaffold.** The repository layout, build pipeline, and single-binary packaging described below are in place. The full agent loop, VM lifecycle, and streaming implementation are being built out in the open, milestone by milestone.
+## Start an existing installation
 
-## What you get
-
-- **ChatGPT-like chat page** — start a session, send a message, watch the agent reply as a stream, not only after the whole run finishes.
-- **One session, one VM** — every session maps to its own Linux VM (Ubuntu-based, optimised for fast startup).
-- **A web terminal** — look inside the VM yourself, alongside the agent.
-- **History survives a crash** — conversation history lives in PostgreSQL. If the backend crashes mid-run, that run is recorded as interrupted; send a new message in the same session and a new run starts from the session's context. The system never silently resumes a dead run.
-- **VM hibernation** — idle VMs can be suspended (snapshot) to save host resources and resumed when a new message arrives.
-- **Admin configuration, in the page** — DeepSeek API key, VM base image, model selection, plan mode, and thinking level / reasoning effort.
-- **Session management** — per-session VM status and copy-on-write disk usage.
-- **Skills and MCP, in the page** — install skills (stored in PostgreSQL, served to the agent loop from the database, never placed inside the VM) and configure MCP servers over HTTP stream only (STDIO is not supported). MCP servers that need OAuth, such as Notion, are supported through an in-page authorisation flow.
-
-## Who this is for
-
-Nimbus Cloud Agent is for technical users who want to run their own agent cloud. It is a **single-user system**: there is no multi-user support, no login, and no permission model. The user is the administrator.
-
-## Quick start (self-hosted)
-
-You need only:
-
-1. One Linux machine that can run QEMU/KVM.
-2. A PostgreSQL database.
-3. A DeepSeek API key (this release supports DeepSeek models only).
-
-Download the release binary for your platform, then run it:
+After completing the macOS setup below, start the application from the repository directory:
 
 ```sh
-./nimbus-cloud-agent \
-  --addr :8080 \
-  --postgres "postgres://nimbus:YOUR_PASSWORD@localhost:5432/nimbus?sslmode=disable"
+npm start                 # foreground; Ctrl-C stops Nimbus
+# or
+npm run start:background  # logs: .local/nimbus.log
+npm stop                  # stop the background service
+open http://127.0.0.1:8080
 ```
 
-Then open `http://localhost:8080` in your browser. That's it — the web UI is served by the same binary; there is no separate frontend server to deploy.
+The launcher reads `deepseekkey` and `e2bhobbykey`, or the environment variables `NIMBUS_DEEPSEEK_API_KEY` and `NIMBUS_E2B_API_KEY`. Both key files, `.env*`, database files, and logs are ignored by Git. Credentials never appear in process arguments or browser responses.
 
-### Startup flags
+PostgreSQL listens only on `127.0.0.1:55432`; its data is in `.local/postgres/`. The local development database uses trust authentication on loopback. Do not expose this database or the single-user application to an untrusted network.
 
-| Flag | Required | Description |
+## Fresh macOS installation
+
+Prerequisites: Homebrew, Node.js **24.11+**, Go **1.25+**, DeepSeek and E2B API keys.
+
+```sh
+npm run setup:mac
+# Save your keys in deepseekkey and e2bhobbykey, or export NIMBUS_* variables.
+npm start
+```
+
+`setup:mac` installs PostgreSQL 17 when needed, initializes a project-local database, installs the explicitly declared Harness and runtime dependencies, builds the frontend, and embeds it in the Go binary. It does not install a login service or any virtual machine.
+
+## Other environments
+
+Use an existing PostgreSQL instance, install the Node runtime dependencies and the exact Harness release, then build:
+
+```sh
+npm ci
+npm ci --prefix web
+npm run build
+export NIMBUS_POSTGRES='postgres://user:password@127.0.0.1:5432/nimbus?sslmode=disable'
+export NIMBUS_E2B_API_KEY='your-e2b-key'
+export NIMBUS_DEEPSEEK_API_KEY='your-deepseek-key'
+./bin/nimbus-cloud-agent serve --harness-path node_modules/.bin/dsh
+```
+
+The Go binary embeds the UI and Nimbus's trusted runtime scripts. If the `runtime/` source directory is absent, it extracts its embedded scripts there. **Node.js and the installed npm dependencies remain runtime requirements**, including the separately installed `@deepseek-ai/dsh@0.2.1-rc.5`; the Harness is not bundled into the executable. Keep `node_modules/` in the application directory (or provide a compatible runtime directory containing those dependencies).
+
+Configuration precedence: flags > `NIMBUS_` environment variables > `config.yaml` (or `--config`) > defaults.
+
+| Flag | Default | Purpose |
 | --- | --- | --- |
-| `--addr` | No (default `:8080`) | Address the HTTP server listens on. |
-| `--postgres` | **Yes** | PostgreSQL connection string (DSN). This is the only required startup parameter. |
-| `--deepseek-api-key` | No | DeepSeek API key. If omitted, set it later in the web UI's settings page. |
-| `--harness-path` | No | Path to a DeepSeek Harness (`dsh`) executable, if you supply your own. See [DeepSeek Harness](#deepseek-harness) below. |
-| `--vm-image` | No | VM base image. If omitted, set it later in the web UI's settings page. |
+| `--addr` | `127.0.0.1:8080` | Loopback-only HTTP server |
+| `--postgres` | required | PostgreSQL DSN |
+| `--harness-path` | `node_modules/.bin/dsh` | Exact Harness installation |
+| `--e2b-api-key` | required | E2B credentials; prefer environment variables |
+| `--deepseek-api-key` | unset | May also be set in the UI |
+| `--e2b-template` | `base` | Template for new sandboxes |
+| `--work-dir` | `.local/turns` | Per-turn Harness working copies |
+| `--runtime-dir` | `runtime` | Trusted Node supervisor scripts |
 
-QEMU/KVM is invoked directly from the host (no extra service to configure), so as long as the host can run KVM guests, the VM side works.
+Changing a key or template in the UI takes effect on subsequent turns/new sandboxes. The model is `deepseek-flash`. Plan and thinking settings persist per session and take effect on subsequent turns; Standard / Wasm PTC becomes fixed when the first message is accepted.
 
-## Architecture at a glance
+## Implemented behavior
 
-```
-Browser (React)
-      │  HTTP + SSE
-      ▼
-Single Go binary (HTTP server)
-      ├── Sessions, chat history, skills, MCP config ──► PostgreSQL
-      ├── Agent loop (DeepSeek Harness, PTC mode) ─────► VM relay ──► QEMU/KVM guest
-      └── Web terminal ───────────────────────────────► VM relay ──► QEMU/KVM guest
-```
+- Three-column Chinese workspace; mobile Session / Chat / Terminal tabs; Markdown replies and expandable tool records.
+- Durable outbox with idempotency, serial processing per session, queueing during a turn, retry of failed delivery, stop, rename, and delete.
+- Incremental assistant **and command output committed before SSE publication**. Reconnect replays from PostgreSQL and deduplicates records.
+- Crash recovery marks unfinished turns interrupted. A new message, including “continue”, starts a new turn. Original Harness records are hydrated through its public persistence API; unfinished displayed text is supplied as explicit recovery context.
+- One lazily created E2B sandbox per session; plain chat and MCP-only work do not start it. Files live in E2B, not the Mac.
+- E2B create/connect/pause/kill, 15-minute idle pause, one-hour `onTimeout: pause`, proactive pause near the deadline, and cloud state reconciliation. Default Hobby template reports its actual CPU and RAM from E2B.
+- Real xterm.js PTY with input, resize, Ctrl-C, reconnect, and the same filesystem as the agent.
+- `deepseek-flash` with native Harness Plan behavior and `off / low / high / max` thinking. Standard / Wasm PTC is a session preset: selectable before the first message, permanently fixed when that message is accepted, including queued or failed turns. Start a new session to change presets. Plan and thinking remain adjustable for subsequent turns.
+- Upload, paste, or drag PNG, JPEG, WebP and GIF images into the composer; preview/remove before sending and view full images in history. Up to 4 images per message, 5 MiB per image and 10 MiB total. GIF input uses the first frame. Native DSH image attachments are retained in PostgreSQL and restored on later turns; image-only messages are supported. Viewing or analyzing an image does not require an E2B sandbox.
+- TypeScript PTC runs in QuickJS WebAssembly; 256 MiB maximum linear memory and 120-second default / 600-second maximum execution deadline. No host filesystem, environment, network, or process primitives are exposed to generated programs.
+- Session lists and the active conversation use EventSource streams, with changes pushed as they happen and independent 5-second heartbeats. There is no browser session-list polling.
+- Database-backed Skills: create/edit/delete/enable, multi-file text editor/upload, 100-file and 5 MiB limits with all-or-nothing validation.
+- Streamable HTTP MCP: enable/edit/delete, connectivity test, OAuth discovery, dynamic registration, PKCE, callback state validation, server-side token storage and refresh. Actual third-party OAuth authorization still requires the account owner's browser login.
 
-The agent loop and the execution environment are deliberately separated: the harness process and the in-VM relay both talk to the backend, never directly to each other. See [ARCHITECTURE.md](ARCHITECTURE.md) for the full folder-by-folder layout.
+Flash supports both text and image input through the same model. The model name and vision formats were checked against the [official model documentation](https://api-docs.deepseek.com/zh-cn/quick_start/pricing/), [October 17 update](https://api-docs.deepseek.com/zh-cn/news/news261017/), and [vision guide](https://api-docs.deepseek.com/zh-cn/guides/vision/) on 2026-10-31. Nimbus intentionally offers only Flash; the upstream API also lists V4 Pro.
 
-## Building from source
-
-Prerequisites: Go, Node.js, PostgreSQL (for running), QEMU/KVM (for running VMs).
+## Verification
 
 ```sh
-# Frontend (React) — builds into web/dist, which the Go binary embeds
-make web
-
-# Backend + embedded frontend, single binary
-make build
-
-# Run it
-./bin/nimbus-cloud-agent --postgres "postgres://nimbus:YOUR_PASSWORD@localhost:5432/nimbus?sslmode=disable"
+go test ./...
+go vet ./...
+npm test
+npm run build
+node scripts/browser-check.mjs  # requires installed Chrome
 ```
 
-Releases are built by `.github/workflows/release.yml`: the React app is built first, its output is embedded into the Go binary, and a single Linux binary (plus checksum) is published per release. See [docs/packaging.md](docs/packaging.md).
+The following integration checks use real API credentials and may consume DeepSeek tokens / E2B usage. **Run them sequentially against a disposable local test workspace**; recovery testing intentionally kills and restarts Nimbus.
 
-## DeepSeek Harness
+```sh
+node scripts/e2e.mjs             # real model, files, PTY, pause/resume, Wasm
+node scripts/features-e2e.mjs    # Skills, Plan/max, isolation, stop, idle pause
+node scripts/invariants-e2e.mjs  # idempotency, queue, append-only DB, validation
+node scripts/session-updates-e2e.mjs # Flash vision, preset locking, SSE, 5s heartbeat, UI
+node scripts/recovery-e2e.mjs    # hard crash, partial output, new turn
+# Separate terminal:
+node scripts/mcp-fixture.mjs
+# Then:
+node scripts/mcp-e2e.mjs         # local OAuth protocol + real model MCP call
+```
 
-DeepSeek Harness is a separate open-source project (MIT licence) by DeepSeek AI. Nimbus Cloud Agent does **not** silently redistribute it:
+The database integration tests use a disposable schema, exercise real migrations and API handlers, and do not call DeepSeek or E2B:
 
-- By default, the build does **not** bundle the harness. Supply it with `--harness-path`, or install it yourself and point Nimbus at it.
-- An opt-in build step (`make bundle-harness`) may download the official `@deepseek-ai/dsh` package, keep its original `LICENSE` file intact under `third_party/deepseek-harness/`, and record its version in `third_party/deepseek-harness/NOTICE.md`. That step is only run when you explicitly ask for it, so no third-party code is redistributed by accident.
-- The agent loop uses the harness in PTC mode only: a single `run_code` tool, with everything else executed through it inside the VM.
+```sh
+NIMBUS_TEST_DATABASE_URL='postgres://nimbus@127.0.0.1:55432/nimbus?sslmode=disable' go test -race ./internal/server
+```
 
-## External dependencies
+Without that variable, the PostgreSQL integration tests are skipped. See [ARCHITECTURE.md](ARCHITECTURE.md) for implementation boundaries, [docs/API.md](docs/API.md) for messages/images and stream contracts, and [docs/VERIFICATION.md](docs/VERIFICATION.md) for completed verification and operational limits.
 
-Only two external components are required to run Nimbus Cloud Agent:
+## Updating an installation
 
-- **PostgreSQL** — the single database for sessions, events, skills, and MCP configuration.
-- **QEMU/KVM** — the VM hypervisor on the host.
+Stop Nimbus before updating dependencies or runtime scripts. Back up PostgreSQL, then run `npm ci`, `npm ci --prefix web`, and `npm run build`. Restart with `npm run start:background` and reload the browser to load the new UI. Startup applies the versioned SQL migrations automatically; rebuilding does not clear conversations.
 
-Everything else (HTTP server, agent orchestration, web UI) is inside the single binary.
+Existing sessions move to Flash for future requests. Previously mixed Standard/PTC sessions keep the last delivered preset; incompatible queued messages become failed and need a new session. Empty sessions remain selectable. Historical Harness events and delivered model snapshots are preserved.
 
-## Roadmap
+## Storage and cleanup
 
-- [x] Repository scaffold, README, architecture, and release pipeline
-- [ ] Session creation, chat UI (three-column: sessions / chat / terminal), and streaming replies
-- [ ] PostgreSQL-backed append-only session history and crash-safe run records
-- [ ] QEMU/KVM lifecycle: create, suspend/resume, and copy-on-write disk accounting
-- [ ] DeepSeek Harness (PTC mode) integration via the backend-mediated relay
-- [ ] Skills and MCP (HTTP stream + OAuth) configuration in the page
-- [ ] Signed releases and install documentation
+Back up PostgreSQL to preserve history, normalized image attachments, and configuration. Removing `.local/postgres` removes this installation's database. Sandbox files require E2B persistence and are not backed up to the Mac.
 
-## Contributing
+Turn files are untrusted as a source of history: each turn creates a fresh directory from PostgreSQL and never reopens previous turn directories. Completed directories can be archived or removed while their session is idle; future turns reconstruct history and attachments from the database. Deleting a session stops its turn, kills its E2B sandbox, removes its supervisor work directory, and cascades its database records, including images. Removing a draft image only detaches it from that unsent message; its uploaded copy remains scoped to the session until session deletion.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Issues and pull requests are welcome. Because this project may be commercialised in the future, contributions are accepted under the project's MIT licence — please do not submit code you do not have the right to license that way.
-
-## Security
-
-See [SECURITY.md](SECURITY.md) for how to report a vulnerability. Note the single-user, no-login design: do not expose a Nimbus instance to an untrusted network.
-
-## Licence
-
-MIT. See [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE).

@@ -1,0 +1,30 @@
+{
+  "name": "nimbus-cloud-agent-runtime",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test runtime/*.test.mjs",
+    "e2e": "node scripts/e2e.mjs",
+    "start": "node scripts/start.mjs",
+    "start:background": "node scripts/manage.mjs start",
+    "stop": "node scripts/manage.mjs stop",
+    "setup:mac": "bash scripts/setup-macos.sh",
+    "build": "npm run build --prefix web && go build -o bin/nimbus-cloud-agent ./cmd/nimbus"
+  },
+  "dependencies": {
+    "@deepseek-ai/dsh": "0.2.1-rc.5",
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "e2b": "2.62.0",
+    "quickjs-emscripten": "0.31.0",
+    "typescript": "7.0.2"
+  },
+  "devDependencies": {
+    "playwright": "1.56.1"
+  },
+  "overrides": {
+    "zod": "4.6.7",
+    "undici": "8.12.3",
+    "@modelcontextprotocol/client": "2.3.0",
+    "fflate": "0.8.3"
+  }
+}

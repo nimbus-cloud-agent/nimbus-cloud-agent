@@ -1,0 +1,12 @@
+import { chromium } from "playwright";
+const browser = await chromium.launch({ channel: "chrome", headless: true });
+const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+const errors = [];
+page.on("pageerror", (e) => errors.push(e.message));
+await page.goto("http://127.0.0.1:8080");
+await page.waitForTimeout(1000);
+console.log("title", await page.title());
+console.log("errors", errors);
+console.log((await page.locator("body").innerText()).slice(0, 1600));
+await page.screenshot({ path: ".local/desktop.png", fullPage: true });
+await browser.close();
