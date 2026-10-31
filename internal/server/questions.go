@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"reflect"
 	"strings"
@@ -10,49 +9,24 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/model"
 	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/store"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
-type questionItem struct {
-	ID      string `json:"id"`
-	Options []struct {
-		Label string `json:"label"`
-	} `json:"options"`
-	MultiSelect bool `json:"multiSelect"`
-}
-
-func interruptQuestions(db *gorm.DB) error {
-	return db.Model(&store.UserQuestion{}).Where("status = 'pending'").Updates(map[string]any{"status": "interrupted", "resolved_at": time.Now()}).Error
-}
-
-type questionAnswer struct {
-	Dismissed bool `json:"dismissed,omitempty"`
-	Answers   []struct {
-		ID       string   `json:"id"`
-		Selected []string `json:"selected"`
-		Custom   *string  `json:"custom,omitempty"`
-	} `json:"answers,omitempty"`
-}
-
-func validateAnswer(raw store.JSON, answer questionAnswer) error {
+func validateAnswer(questions []model.Question, answer model.QuestionAnswer) error {
 	if answer.Dismissed {
 		if len(answer.Answers) != 0 {
 			return fmt.Errorf("暂不决定不能同时提交答案")
 		}
 		return nil
 	}
-	var questions []questionItem
-	if e := json.Unmarshal(raw, &questions); e != nil {
-		return e
-	}
+
 	if len(answer.Answers) != len(questions) {
 		return fmt.Errorf("请回答每个问题")
 	}
 	seen := map[string]bool{}
 	for _, a := range answer.Answers {
-		var q *questionItem
+		var q *model.Question
 		for i := range questions {
 			if questions[i].ID == a.ID {
 				q = &questions[i]
@@ -86,12 +60,6 @@ func validateAnswer(raw store.JSON, answer questionAnswer) error {
 	return nil
 }
 
-func (s *Server) questions(sid string) []store.UserQuestion {
-	rows := []store.UserQuestion{}
-	s.S.DB.Where("session_id = ?", sid).Order("created_at, id").Find(&rows)
-	return rows
-}
-
 func (s *Server) questionRoutes(r *gin.Engine) {
 	r.POST("/api/sessions/:id/questions/:question/answer", func(c *gin.Context) {
 		sess, ok := s.session(c)
@@ -102,25 +70,25 @@ func (s *Server) questionRoutes(r *gin.Engine) {
 			s.fail(c, 400, fmt.Errorf("invalid question ID"))
 			return
 		}
-		var answer questionAnswer
+		var answer model.QuestionAnswer
 		if e := c.ShouldBindJSON(&answer); e != nil {
 			s.fail(c, 400, e)
 			return
 		}
 		status := 500
-		err := s.S.DB.Transaction(func(tx *gorm.DB) error {
-			var q store.UserQuestion
-			if e := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&q, "id = ? AND session_id = ?", c.Param("question"), sess.ID).Error; e != nil {
+		err := s.S.Transaction(c.Request.Context(), func(tx *store.Store) error {
+			row, e := tx.LockQuestion(c.Request.Context(), sess.ID, c.Param("question"))
+			if e != nil {
 				status = 404
 				return fmt.Errorf("评审不存在")
 			}
+			q := model.UserQuestion(row)
 			if e := validateAnswer(q.Questions, answer); e != nil {
 				status = 400
 				return e
 			}
 			if q.Status != "pending" {
-				var old questionAnswer
-				if (q.Status == "answered" || q.Status == "dismissed") && json.Unmarshal(q.Answer, &old) == nil && reflect.DeepEqual(old, answer) {
+				if (q.Status == "answered" || q.Status == "dismissed") && q.Answer != nil && reflect.DeepEqual(*q.Answer, answer) {
 					return nil
 				}
 				status = 409
@@ -130,7 +98,7 @@ func (s *Server) questionRoutes(r *gin.Engine) {
 			if answer.Dismissed {
 				next = "dismissed"
 			}
-			return tx.Model(&q).Updates(map[string]any{"answer": store.Raw(answer), "status": next, "resolved_at": time.Now()}).Error
+			return tx.ResolveQuestion(c.Request.Context(), q.ID, next, &answer, time.Now())
 		})
 		if err != nil {
 			s.fail(c, status, err)
@@ -142,42 +110,32 @@ func (s *Server) questionRoutes(r *gin.Engine) {
 
 // A runtime question stays pending across browser disconnects; only an explicit
 // answer, Stop, or backend shutdown releases the native tool call.
-func (s *Server) waitQuestion(ctx context.Context, out store.Outbox, raw json.RawMessage) (json.RawMessage, error) {
-	var request struct {
-		Questions json.RawMessage `json:"questions"`
+func (s *Server) waitQuestion(ctx context.Context, out model.Outbox, request model.QuestionRequest) (model.QuestionAnswer, error) {
+	if len(request.Questions) == 0 || len(request.Questions) > 10 {
+		return model.QuestionAnswer{}, fmt.Errorf("invalid user question batch")
 	}
-	if e := json.Unmarshal(raw, &request); e != nil {
-		return nil, e
+	q := model.UserQuestion{ID: uuid.NewString(), SessionID: out.SessionID, TurnID: out.TurnID, Questions: request.Questions, Status: "pending", CreatedAt: time.Now()}
+	if err := s.S.CreateQuestion(ctx, store.UserQuestion(q)); err != nil {
+		return model.QuestionAnswer{}, err
 	}
-	var items []questionItem
-	if e := json.Unmarshal(request.Questions, &items); e != nil {
-		return nil, e
-	}
-	if len(items) == 0 || len(items) > 10 || len(raw) > 512<<10 {
-		return nil, fmt.Errorf("invalid user question batch")
-	}
-	q := store.UserQuestion{ID: uuid.NewString(), SessionID: out.SessionID, TurnID: out.TurnID, Questions: request.Questions, Status: "pending", CreatedAt: time.Now()}
-	if e := s.S.DB.Create(&q).Error; e != nil {
-		return nil, e
-	}
-	defer func() {
-		s.S.DB.Model(&store.UserQuestion{}).Where("id = ? AND status = 'pending'", q.ID).Updates(map[string]any{"status": "interrupted", "resolved_at": time.Now()})
-	}()
+	defer s.S.InterruptQuestions(context.WithoutCancel(ctx), q.ID)
 	tick := time.NewTicker(200 * time.Millisecond)
 	defer tick.Stop()
 	for {
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return model.QuestionAnswer{}, ctx.Err()
 		case <-tick.C:
-			if e := s.S.DB.First(&q, "id = ?", q.ID).Error; e != nil {
-				return nil, e
+			row, err := s.S.Question(ctx, q.ID)
+			if err != nil {
+				return model.QuestionAnswer{}, err
 			}
-			if q.Status == "answered" || q.Status == "dismissed" {
-				return q.Answer, nil
+			q = model.UserQuestion(row)
+			if (q.Status == "answered" || q.Status == "dismissed") && q.Answer != nil {
+				return *q.Answer, nil
 			}
 			if q.Status != "pending" {
-				return nil, fmt.Errorf("user question interrupted")
+				return model.QuestionAnswer{}, fmt.Errorf("user question interrupted")
 			}
 		}
 	}

@@ -2,7 +2,7 @@
 
 A local workspace for a DeepSeek agent with an isolated, on-demand E2B cloud sandbox. Runs on **macOS or Linux**; no QEMU, KVM, Docker, or Linux execution host is required.
 
-The Go service serves the React UI at **http://127.0.0.1:8080**. PostgreSQL owns conversations, image attachments, incremental output, settings, Skills, and MCP credentials. DeepSeek Harness runs the agent loop; commands and generated files stay in E2B.
+The Go service serves the React UI at **http://127.0.0.1:8080**. PostgreSQL owns conversations, image attachments, incremental output, settings, Skills, and MCP credentials. The separately installed **`nimbus-agent-runtime`** npm package wraps DeepSeek Harness and runs it inside one persistent Node service managed by Go; commands and generated files stay in E2B. Go and Node communicate over JSON-RPC 2.0 on stdio.
 
 ## Start an existing installation
 
@@ -30,23 +30,36 @@ npm run setup:mac
 npm start
 ```
 
-`setup:mac` installs PostgreSQL 17 when needed, initializes a project-local database, installs the explicitly declared Harness and runtime dependencies, builds the frontend, and embeds it in the Go binary. It does not install a login service or any virtual machine.
+`setup:mac` installs PostgreSQL 17 when needed, initializes a project-local database, installs the npm workspace dependencies, generates the RPC contract, builds the TypeScript runtime package and the frontend, and embeds only the frontend in the Go binary. It does not install a login service or any virtual machine.
 
 ## Other environments
 
-Use an existing PostgreSQL instance, install the Node runtime dependencies and the exact Harness release, then build:
+Build from source with an existing PostgreSQL instance:
 
 ```sh
 npm ci
-npm ci --prefix web
-npm run build
+make                      # generate protocol → TypeScript runtime + UI + Go
 export NIMBUS_POSTGRES='postgres://user:password@127.0.0.1:5432/nimbus?sslmode=disable'
 export NIMBUS_E2B_API_KEY='your-e2b-key'
 export NIMBUS_DEEPSEEK_API_KEY='your-deepseek-key'
-./bin/nimbus-cloud-agent serve --harness-path node_modules/.bin/dsh
+npm start
 ```
 
-The Go binary embeds the UI and Nimbus's trusted runtime scripts. If the `runtime/` source directory is absent, it extracts its embedded scripts there. **Node.js and the installed npm dependencies remain runtime requirements**, including the separately installed `@deepseek-ai/dsh@0.2.1-rc.5`; the Harness is not bundled into the executable. Keep `node_modules/` in the application directory (or provide a compatible runtime directory containing those dependencies).
+The development launcher uses the workspace's `node_modules/.bin/nimbus-agent-runtime`. For an installation outside this repository, distribute the Go executable and runtime package separately:
+
+```sh
+make pack-runtime         # release/nimbus-agent-runtime-0.2.0.tgz
+npm install -g ./release/nimbus-agent-runtime-0.2.0.tgz
+./bin/nimbus-cloud-agent serve
+```
+
+The npm package **directly depends on DeepSeek Harness** and installs its own SDK dependencies. Go invokes `nimbus-agent-runtime` from PATH; an alternative executable can be selected with `--runtime-command`. No Harness path, runtime source directory, or Go extraction step is needed. Node.js 24.11+ and PostgreSQL remain runtime requirements. The public npm package has not been published; install the tarball for now.
+
+The application keeps persistence records (`internal/store`) separate from business aggregates (`internal/model`). Only the DAO uses GORM; business transactions receive a transaction-scoped DAO. JSONB fields are decoded on read and RPC results are mapped at the adapter, so sandbox IDs, options, attachments and review answers stay typed throughout processing. See [Architecture](ARCHITECTURE.md#models-and-io-boundaries).
+
+Runtime 0.2.0 requires protocol v2; update both the Go executable and runtime package together.
+
+The protocol source is `protocol/runtime.openrpc.json`. quicktype generates Go/TypeScript DTOs; typed clients and dispatchers are generated alongside them. Both sides use JSON-RPC SDKs with Content-Length framing. Generated files and build artifacts are ignored by Git. **`make`, `make test`, `make pack-runtime`, and the npm build/test/pack entries generate automatically.** Run `make generate` explicitly when preparing an editor or invoking Go commands directly.
 
 Configuration precedence: flags > `NIMBUS_` environment variables > `config.yaml` (or `--config`) > defaults.
 
@@ -54,18 +67,19 @@ Configuration precedence: flags > `NIMBUS_` environment variables > `config.yaml
 | --- | --- | --- |
 | `--addr` | `127.0.0.1:8080` | Loopback-only HTTP server |
 | `--postgres` | required | PostgreSQL DSN |
-| `--harness-path` | `node_modules/.bin/dsh` | Exact Harness installation |
+| `--runtime-command` | `nimbus-agent-runtime` | Installed runtime executable (PATH or absolute path) |
 | `--e2b-api-key` | required | E2B credentials; prefer environment variables |
 | `--deepseek-api-key` | unset | May also be set in the UI |
 | `--e2b-template` | `base` | Template for new sandboxes |
 | `--work-dir` | `.local/turns` | Per-turn Harness working copies |
-| `--runtime-dir` | `runtime` | Trusted Node supervisor scripts |
 
 Changing a key or template in the UI takes effect on subsequent turns/new sandboxes. The model is `deepseek-flash`. Plan and thinking settings persist per session and take effect on subsequent turns; Standard / Wasm PTC becomes fixed when the first message is accepted.
 
 ## Implemented behavior
 
 - Three-column Chinese workspace; mobile Session / Chat / Terminal tabs; Markdown replies and expandable tool records.
+- One persistent Node process for turns, MCP, E2B, image normalization and PTYs. A reusable worker-thread pool keeps PTC execution independent across sessions; each turn receives a fresh DSH context and PostgreSQL-backed working copy. No per-turn Node process startup.
+- Go automatically restarts a crashed Node service with bounded backoff. Affected turns/reviews become interrupted and retain saved output; accepted tool operations are never replayed automatically. `/api/health` exposes the Node PID and generation.
 - Durable outbox with idempotency, serial processing per session, queueing during a turn, retry of failed delivery, stop, rename, and delete.
 - Incremental assistant **and command output committed before SSE publication**. Reconnect replays from PostgreSQL and deduplicates records.
 - Crash recovery marks unfinished turns interrupted. A new message, including “continue”, starts a new turn. Original Harness records are hydrated through its public persistence API; unfinished displayed text is supplied as explicit recovery context.
@@ -85,10 +99,9 @@ Flash supports both text and image input through the same model. The model name 
 ## Verification
 
 ```sh
-go test ./...
+make test                   # generates, compiles runtime fixtures, Node tests + Go race tests
 go vet ./...
-npm test
-npm run build
+make build
 node scripts/browser-check.mjs  # requires installed Chrome
 node scripts/tool-ui-check.mjs  # tool disclosures, nested PTC, keyboard, streaming, mobile; browser fixtures only
 ```
@@ -101,6 +114,7 @@ node scripts/features-e2e.mjs    # Skills, Plan/max, isolation, stop, idle pause
 node scripts/invariants-e2e.mjs  # idempotency, queue, append-only DB, validation
 node scripts/session-updates-e2e.mjs # Flash vision, preset locking, SSE, 5s heartbeat, UI
 node scripts/plan-e2e.mjs        # real Flash/DSH plan approval, feedback, defer, refresh, stop
+node scripts/runtime-e2e.ts     # persistent PID, concurrency, stop, Node crash/restart, E2B/PTY
 node scripts/recovery-e2e.mjs    # hard crash, partial output, new turn
 # Separate terminal:
 node scripts/mcp-fixture.mjs
@@ -111,7 +125,7 @@ node scripts/mcp-e2e.mjs         # local OAuth protocol + real model MCP call
 The database integration tests use a disposable schema, exercise real migrations and API handlers, and do not call DeepSeek or E2B:
 
 ```sh
-NIMBUS_TEST_DATABASE_URL='postgres://nimbus@127.0.0.1:55432/nimbus?sslmode=disable' go test -race ./internal/server
+NIMBUS_TEST_DATABASE_URL='postgres://nimbus@127.0.0.1:55432/nimbus?sslmode=disable' make test
 ```
 
 Without that variable, the PostgreSQL integration tests are skipped. See [ARCHITECTURE.md](ARCHITECTURE.md) for implementation boundaries, [docs/API.md](docs/API.md) for messages/images and stream contracts, and [docs/VERIFICATION.md](docs/VERIFICATION.md) for completed verification and operational limits.
@@ -122,7 +136,7 @@ Without that variable, the PostgreSQL integration tests are skipped. See [ARCHIT
 
 ## Updating an installation
 
-Stop Nimbus before updating dependencies or runtime scripts. Back up PostgreSQL, then run `npm ci`, `npm ci --prefix web`, and `npm run build`. Restart with `npm run start:background` and reload the browser to load the new UI. Startup applies the versioned SQL migrations automatically; rebuilding does not clear conversations.
+Stop Nimbus before updating dependencies or the runtime package. Back up PostgreSQL, then run `npm ci` and `make build` for a source checkout. For separate artifacts, replace the Go executable and install the matching runtime tarball; do not install or configure Harness separately. Restart with `npm run start:background` and reload the browser to load the new UI. Startup applies the versioned SQL migrations automatically; rebuilding does not clear conversations.
 
 Existing sessions move to Flash for future requests. Previously mixed Standard/PTC sessions keep the last delivered preset; incompatible queued messages become failed and need a new session. Empty sessions remain selectable. Historical Harness events and delivered model snapshots are preserved.
 
@@ -130,6 +144,6 @@ Existing sessions move to Flash for future requests. Previously mixed Standard/P
 
 Back up PostgreSQL to preserve history, normalized image attachments, and configuration. Removing `.local/postgres` removes this installation's database. Sandbox files require E2B persistence and are not backed up to the Mac.
 
-Turn files are untrusted as a source of history: each turn creates a fresh directory from PostgreSQL and never reopens previous turn directories. Completed directories can be archived or removed while their session is idle; future turns reconstruct history and attachments from the database. Deleting a session stops its turn, kills its E2B sandbox, removes its supervisor work directory, and cascades its database records, including images. Removing a draft image only detaches it from that unsent message; its uploaded copy remains scoped to the session until session deletion.
+Turn files are untrusted as a source of history: each turn creates a fresh directory from PostgreSQL and never reopens previous turn directories. The Node process and its idle workers remain alive between turns; their module caches are reused, but DSH contexts and attachment caches are isolated per turn. Completed directories can be archived or removed while their session is idle; future turns reconstruct history and attachments from the database. Deleting a session stops its turn, kills its E2B sandbox, removes its supervisor work directory, and cascades its database records, including images. Removing a draft image only detaches it from that unsent message; its uploaded copy remains scoped to the session until session deletion.
 
 MIT — see [LICENSE](LICENSE).

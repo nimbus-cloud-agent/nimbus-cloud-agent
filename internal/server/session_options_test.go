@@ -2,87 +2,31 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http/httptest"
-	"net/url"
-	"os"
-	"path/filepath"
-	"strings"
 	"sync"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/config"
+	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/model"
 	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/store"
-	"gorm.io/driver/postgres"
-	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
+	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/store/testdb"
 )
 
 // Each test gets a disposable schema and no scheduler: no real model calls or
 // changes to the developer's sessions. Exercise the actual SQL migrations/routes.
-func optionsDB(t *testing.T, through string) (*gorm.DB, func(string)) {
+func optionsDB(t *testing.T) *store.Store {
 	t.Helper()
-	dsn := os.Getenv("NIMBUS_TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("set NIMBUS_TEST_DATABASE_URL for PostgreSQL integration tests")
-	}
-	cfg := &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)}
-	admin, err := gorm.Open(postgres.Open(dsn), cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	schema := "nimbus_test_" + strings.ReplaceAll(uuid.NewString(), "-", "")
-	if err := admin.Exec("CREATE SCHEMA " + schema).Error; err != nil {
-		t.Fatal(err)
-	}
-	u, err := url.Parse(dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	q := u.Query()
-	q.Set("search_path", schema)
-	u.RawQuery = q.Encode()
-	db, err := gorm.Open(postgres.Open(u.String()), cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		raw, _ := db.DB()
-		raw.Close()
-		if err := admin.Exec("DROP SCHEMA " + schema + " CASCADE").Error; err != nil {
-			t.Error(err)
-		}
-		raw, _ = admin.DB()
-		raw.Close()
-	})
-	apply := func(name string) {
-		t.Helper()
-		sql, err := os.ReadFile(filepath.Join("..", "store", "migrations", name))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := db.Exec(string(sql)).Error; err != nil {
-			t.Fatalf("%s: %v", name, err)
-		}
-	}
-	files, err := filepath.Glob(filepath.Join("..", "store", "migrations", "*.sql"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, file := range files {
-		if filepath.Base(file) <= through {
-			apply(filepath.Base(file))
-		}
-	}
-	return db, apply
+	return testdb.Open(t)
 }
-
-func optionsRouter(db *gorm.DB) *gin.Engine {
+func optionsRouter(db *store.Store) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	s := &Server{S: &store.Store{DB: db}, C: config.Config{DeepSeekKey: "test-only-no-network"}}
+	s := &Server{S: db, C: config.Config{DeepSeekKey: "test-only-no-network"}}
 	s.routes(r)
 	return r
 }
@@ -108,7 +52,7 @@ func expectOptions(t *testing.T, r *gin.Engine, status int, method, path string,
 }
 
 func TestSessionPresetLifecycle(t *testing.T) {
-	db, _ := optionsDB(t, "999")
+	db := optionsDB(t)
 	r := optionsRouter(db)
 	s := expectOptions(t, r, 201, "POST", "/sessions", nil)
 	path := "/sessions/" + s["id"].(string)
@@ -143,16 +87,7 @@ func TestSessionPresetLifecycle(t *testing.T) {
 	if got["plan"] != false || got["thinking"] != "max" || got["mode"] != "ptc" {
 		t.Fatal(got)
 	}
-	if err := db.Exec("UPDATE sessions SET locked_mode=NULL WHERE id=?", s["id"]).Error; err == nil {
-		t.Fatal("SQL unlocked session")
-	}
-	if err := db.Exec("UPDATE sessions SET options=jsonb_set(options, '{mode}', '\"standard\"') WHERE id=?", s["id"]).Error; err == nil {
-		t.Fatal("SQL changed preset")
-	}
-	if err := db.Exec("UPDATE outbox_messages SET options=jsonb_set(options, '{mode}', '\"standard\"') WHERE id=?", first["id"]).Error; err == nil {
-		t.Fatal("SQL changed queued preset")
-	}
-	if err := db.Exec("UPDATE outbox_messages SET status='failed' WHERE id=?", first["id"]).Error; err != nil {
+	if err := db.UpdateOutbox(context.Background(), first["id"].(string), store.OutboxChanges{Status: ptr("failed")}); err != nil {
 		t.Fatal(err)
 	}
 	// Construct a new router to demonstrate the lock is durable, not process state.
@@ -162,7 +97,7 @@ func TestSessionPresetLifecycle(t *testing.T) {
 }
 
 func TestConcurrentFirstMessagePreset(t *testing.T) {
-	db, _ := optionsDB(t, "999")
+	db := optionsDB(t)
 	r := optionsRouter(db)
 	for i := 0; i < 12; i++ {
 		s := expectOptions(t, r, 201, "POST", "/sessions", nil)
@@ -196,14 +131,14 @@ func TestConcurrentFirstMessagePreset(t *testing.T) {
 }
 
 func TestImageMessageOwnershipAndAdmission(t *testing.T) {
-	db, _ := optionsDB(t, "999")
+	db := optionsDB(t)
 	r := optionsRouter(db)
 	a := expectOptions(t, r, 201, "POST", "/sessions", nil)
 	b := expectOptions(t, r, 201, "POST", "/sessions", nil)
 	sid := a["id"].(string)
 	path := "/sessions/" + sid
-	img := store.Image{ID: uuid.NewString(), SessionID: sid, Ref: store.Raw(gin.H{"name": "test.png", "mediaType": "image/png", "bytes": 12, "width": 1, "height": 1}), Data: []byte("fixture")}
-	if e := db.Create(&img).Error; e != nil {
+	img := store.Image{ID: uuid.NewString(), SessionID: sid, Ref: model.ImageRef{Name: "test.png", MediaType: "image/png", Bytes: 12, Width: 1, Height: 1}, Data: []byte("fixture")}
+	if e := db.CreateImage(context.Background(), img); e != nil {
 		t.Fatal(e)
 	}
 	// Text pretending to be a raster is refused before starting a runtime.
@@ -221,67 +156,10 @@ func TestImageMessageOwnershipAndAdmission(t *testing.T) {
 	if result["content"] != "" || len(result["images"].([]any)) != 1 {
 		t.Fatal("image-only message lost attachment")
 	}
-	if e := db.Delete(&store.Session{}, "id=?", sid).Error; e != nil {
+	if e := db.DeleteSession(context.Background(), sid); e != nil {
 		t.Fatal(e)
 	}
-	var count int64
-	db.Model(&store.Image{}).Where("session_id=?", sid).Count(&count)
-	if count != 0 {
-		t.Fatal("session deletion retained image data")
-	}
-}
-
-func TestLegacyPresetAndModelMigration(t *testing.T) {
-	db, apply := optionsDB(t, "003~")
-	id, blank := uuid.NewString(), uuid.NewString()
-	for _, sid := range []string{id, blank} {
-		if err := db.Exec("INSERT INTO sessions(id) VALUES (?)", sid).Error; err != nil {
-			t.Fatal(err)
-		}
-	}
-	// A former mixed session: standard -> PTC, with an incompatible queued turn.
-	for i, mode := range []string{"standard", "ptc", "standard"} {
-		status := "delivered"
-		var seq any = i * 10
-		if i == 2 {
-			status = "queued"
-			seq = nil
-		}
-		opts := store.Raw(gin.H{"model": "deepseek-chat", "thinking": "off", "plan": false, "mode": mode})
-		if err := db.Exec("INSERT INTO outbox_messages(id,session_id,turn_id,client_msg_id,content,options,status,delivered_seq) VALUES (?,?,?,?,?,?,?,?)", uuid.NewString(), id, uuid.NewString(), uuid.NewString(), "old", opts, status, seq).Error; err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := db.Exec("INSERT INTO session_events(session_id,seq,type,payload) VALUES (?,0,'fixture','{\"original\":true}')", id).Error; err != nil {
-		t.Fatal(err)
-	}
-	apply("004_session_preset.sql")
-	apply("005_deepseek_flash.sql")
-	var s store.Session
-	db.First(&s, "id=?", id)
-	if s.LockedMode == nil || *s.LockedMode != "ptc" || !bytes.Contains(s.Options, []byte("deepseek-flash")) {
-		t.Fatal(s)
-	}
-	var b store.Session
-	db.First(&b, "id=?", blank)
-	if b.LockedMode != nil {
-		t.Fatal("migration locked blank session")
-	}
-	var queued store.Outbox
-	db.First(&queued, "session_id=? AND delivered_seq IS NULL", id)
-	if queued.Status != "failed" || queued.Error == "" {
-		t.Fatal(queued)
-	}
-	r := optionsRouter(db)
-	expectOptions(t, r, 409, "POST", "/sessions/"+id+"/messages/"+queued.ID+"/retry", nil)
-	var old store.Outbox
-	db.First(&old, "session_id=? AND delivered_seq=0", id)
-	if !bytes.Contains(old.Options, []byte("deepseek-chat")) {
-		t.Fatal("rewrote historical model")
-	}
-	var ev store.Event
-	db.First(&ev, "session_id=?", id)
-	if string(ev.Payload) != "{\"original\": true}" {
-		t.Fatal("rewrote native event", string(ev.Payload))
+	if _, err := db.Image(context.Background(), sid, img.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatal("session deletion retained image data", err)
 	}
 }

@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/store"
+	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/model"
 )
 
 const streamHeartbeatInterval = 5 * time.Second
@@ -24,13 +24,17 @@ func (s *Server) sessionsStream(c *gin.Context) {
 	defer heartbeat.Stop()
 	last := ""
 	for {
-		var sessions []store.Session
-		if err := s.S.DB.Order("last_active_at DESC, id").Find(&sessions).Error; err != nil {
+		sessions, err := s.S.Sessions(c.Request.Context())
+		if err != nil {
 			return
 		}
-		views := make([]gin.H, 0, len(sessions))
+		views := make([]model.SessionView, 0, len(sessions))
 		for _, session := range sessions {
-			views = append(views, s.view(session))
+			view, err := s.view(c.Request.Context(), model.Session(session))
+			if err != nil {
+				return
+			}
+			views = append(views, view)
 		}
 		data, err := json.Marshal(views)
 		if err != nil {

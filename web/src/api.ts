@@ -1,4 +1,5 @@
-export async function api<T = any>(
+import { decodeEvent } from "./event-codec";
+export async function api<T = unknown>(
   path: string,
   method = "GET",
   body?: unknown,
@@ -17,7 +18,9 @@ export async function api<T = any>(
     }
     throw Error(error);
   }
-  return r.status === 204 ? (undefined as T) : await r.json();
+  if (r.status === 204) return undefined as T;
+  const data: unknown = await r.json();
+  return data as T;
 }
 export type Options = {
   model: string;
@@ -39,7 +42,125 @@ export type Session = {
     error?: string;
   };
 };
-export type Event = { seq: number; type: string; payload: any };
+export type ContentBlock = { type: string; text?: string; reasoning?: string };
+export type Content = string | ContentBlock[];
+// Foreign extension fields remain available for the trace viewer; rendering uses
+// the known projection and the normalized tool fields computed at ingress.
+export type NativeData = {
+  id?: string;
+  callId?: string;
+  subCallId?: string;
+  parentCallId?: string;
+  rootCallId?: string;
+  name?: string;
+  toolName?: string;
+  arguments?: unknown;
+  message?: {
+    content?: Content;
+    toolCallId?: string;
+    isError?: boolean;
+    source?: { callId?: string };
+  };
+  content?: Content;
+  result?: { content?: Content };
+  isError?: boolean;
+  error?: string | { message?: string };
+  step?: number;
+  turn?: number;
+};
+export type WireEvent = {
+  seq: number;
+  type: string;
+  payload: { time?: number; data: NativeData };
+};
+export type ToolArguments = {
+  description?: string;
+  path?: string;
+  command?: string;
+  query?: string;
+  name?: string;
+  plan?: string;
+  code?: string;
+  cwd?: string;
+  content?: string;
+  formatted: string;
+};
+export type ToolResultView = {
+  text: string;
+  formatted: string;
+  failed: boolean;
+  command?: {
+    stdout?: string;
+    stderr?: string;
+    exitCode?: number;
+    truncated: boolean;
+  };
+  fileContent?: string;
+};
+export type Event = WireEvent & {
+  tool?: { args: ToolArguments; result?: ToolResultView };
+};
+export type StreamFrame = {
+  id: number;
+  turn_id: string;
+  payload: {
+    type: string;
+    attemptId?: string;
+    callId?: string;
+    channel?: string;
+    text?: string;
+    step?: number;
+    turn?: number;
+    chunk?: { type: string; text?: string; reasoning?: string };
+    outcome?: { seq?: number };
+  };
+};
+export type History = {
+  events: Event[];
+  frames: StreamFrame[];
+  outbox: Outbox[];
+  questions: UserQuestion[];
+  has_more: boolean;
+};
+export type SettingsData = {
+  deepseek_api_key: string;
+  e2b_api_key: string;
+  e2b_template: string;
+  idle_timeout_minutes: number;
+};
+export type MCPServer = {
+  id: string;
+  name: string;
+  url: string;
+  enabled: boolean;
+  oauth_state: string;
+};
+export type MCPDraft = Omit<MCPServer, "id" | "oauth_state"> & {
+  id?: string;
+  oauth_state?: string;
+};
+export type MCPResult = {
+  ok: boolean;
+  auth_url?: string;
+  tools?: { name: string; description?: string }[];
+  error?: string;
+};
+export type TerminalMessage = {
+  data?: string;
+  ready?: boolean;
+  error?: string;
+};
+
+// All JSON parsing belongs to transport ingress, never component render paths.
+export function decodeJSON<T>(text: string): T {
+  return JSON.parse(text) as T;
+}
+export async function history(id: string, after: number): Promise<History> {
+  const wire = await api<Omit<History, "events"> & { events: WireEvent[] }>(
+    `/sessions/${id}/events?after_seq=${after}`,
+  );
+  return { ...wire, events: wire.events.map(decodeEvent) };
+}
 export type MessageImage = {
   id: string;
   name: string;

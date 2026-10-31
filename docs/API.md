@@ -2,6 +2,16 @@
 
 All paths below are relative to `http://127.0.0.1:8080/api`. Nimbus is a single-user local application; requests are subject to loopback Host and same-origin checks. JSON errors use `{"error":"message"}`. API keys are configured server-side and must not be sent by the browser with messages.
 
+## Runtime health
+
+`GET /health` returns the control-plane status and supervised Node process:
+
+```json
+{"ok":true,"runtime":{"state":"running","pid":12345,"generation":1}}
+```
+
+The PID remains stable across turns, MCP/E2B calls, image uploads and terminal connections. `state` is `running`, `restarting` or `stopped`; a restart increments `generation` within the current Go process lifetime. `ok` indicates the Go HTTP service is alive, so inspect `runtime.state` separately. Internal tool dispatch uses the separately installed `nimbus-agent-runtime` package through SDK-based JSON-RPC 2.0 on stdio (Content-Length framing, protocol v2); the old `/internal/tools` HTTP route is removed.
+
 ## Sessions and options
 
 | Method and path | Behavior |

@@ -2,13 +2,14 @@ package config
 
 import (
 	"fmt"
+	"os/exec"
+	"strings"
+
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"os"
-	"strings"
 )
 
-type Config struct{ Addr, Postgres, HarnessPath, RuntimeDir, WorkDir, DeepSeekKey, E2BKey, E2BTemplate string }
+type Config struct{ Addr, Postgres, RuntimeCommand, WorkDir, DeepSeekKey, E2BKey, E2BTemplate string }
 
 func Command(run func(Config) error) *cobra.Command {
 	v := viper.New()
@@ -20,8 +21,7 @@ func Command(run func(Config) error) *cobra.Command {
 	f.String("config", "", "Configuration file")
 	f.String("addr", "127.0.0.1:8080", "Local HTTP listen address")
 	f.String("postgres", "", "PostgreSQL DSN (required)")
-	f.String("harness-path", "node_modules/.bin/dsh", "Installed DeepSeek Harness 0.2.1-rc.5")
-	f.String("runtime-dir", "runtime", "Nimbus runtime directory")
+	f.String("runtime-command", "nimbus-agent-runtime", "Installed nimbus-agent-runtime executable")
 	f.String("work-dir", ".local/turns", "Per-turn working files")
 	f.String("deepseek-api-key", "", "DeepSeek API key")
 	f.String("e2b-api-key", "", "E2B API key (required)")
@@ -38,20 +38,20 @@ func Command(run func(Config) error) *cobra.Command {
 			v.AddConfigPath(".")
 			_ = v.ReadInConfig()
 		}
-		c := Config{Addr: v.GetString("addr"), Postgres: v.GetString("postgres"), HarnessPath: v.GetString("harness-path"), RuntimeDir: v.GetString("runtime-dir"), WorkDir: v.GetString("work-dir"), DeepSeekKey: v.GetString("deepseek-api-key"), E2BKey: v.GetString("e2b-api-key"), E2BTemplate: v.GetString("e2b-template")}
+		c := Config{Addr: v.GetString("addr"), Postgres: v.GetString("postgres"), RuntimeCommand: v.GetString("runtime-command"), WorkDir: v.GetString("work-dir"), DeepSeekKey: v.GetString("deepseek-api-key"), E2BKey: v.GetString("e2b-api-key"), E2BTemplate: v.GetString("e2b-template")}
 		if c.Postgres == "" {
 			return fmt.Errorf("--postgres or NIMBUS_POSTGRES is required")
 		}
 		if c.E2BKey == "" {
 			return fmt.Errorf("--e2b-api-key or NIMBUS_E2B_API_KEY is required")
 		}
-		if _, e := os.Stat(c.HarnessPath); e != nil {
-			return fmt.Errorf("install DeepSeek Harness 0.2.1-rc.5 and set --harness-path: %w", e)
+		if _, e := exec.LookPath(c.RuntimeCommand); e != nil {
+			return fmt.Errorf("install nimbus-agent-runtime with npm or set --runtime-command: %w", e)
 		}
 		return run(c)
 	}
 	root.AddCommand(&cobra.Command{Use: "serve", RunE: root.RunE}, &cobra.Command{Use: "version", Run: func(cmd *cobra.Command, args []string) {
-		fmt.Fprintln(cmd.OutOrStdout(), "Nimbus 0.1.0 / DSH 0.2.1-rc.5")
+		fmt.Fprintln(cmd.OutOrStdout(), "Nimbus 0.1.0 / agent-runtime protocol v2")
 	}})
 	return root
 }

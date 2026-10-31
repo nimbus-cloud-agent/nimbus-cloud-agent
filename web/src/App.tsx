@@ -27,6 +27,10 @@ import {
 } from "lucide-react";
 import {
   api,
+  history,
+  decodeJSON,
+  type WireEvent,
+  type StreamFrame,
   sandboxLabels,
   type Session,
   type Event,
@@ -35,6 +39,7 @@ import {
   type MessageImage,
   type UserQuestion,
 } from "./api";
+import { decodeEvent } from "./event-codec";
 import { Picker, Toggle, Fold } from "./components";
 import TerminalPanel from "./Terminal";
 import Settings from "./Settings";
@@ -46,7 +51,7 @@ export default function App() {
     [id, setId] = useState(location.hash.slice(1)),
     [events, setEvents] = useState<Event[]>([]),
     [outbox, setOutbox] = useState<Outbox[]>([]),
-    [frames, setFrames] = useState<any[]>([]);
+    [frames, setFrames] = useState<StreamFrame[]>([]);
   const [questions, setQuestions] = useState<UserQuestion[]>([]);
   const [draft, setDraft] = useState(""),
     [error, setError] = useState(""),
@@ -80,7 +85,7 @@ export default function App() {
     source.onopen = () => setOnline(true);
     source.onerror = () => setOnline(false);
     source.addEventListener("sessions", (e) => {
-      const all: Session[] = JSON.parse(e.data);
+      const all = decodeJSON<Session[]>(e.data);
       setSessions(all);
       setId((selected) =>
         all.some((s) => s.id === selected) ? selected : (all[0]?.id ?? ""),
@@ -104,14 +109,14 @@ export default function App() {
         let after = -1,
           all: Event[] = [];
         while (true) {
-          const d = await api(`/sessions/${id}/events?after_seq=${after}`);
+          const d = await history(id, after);
           if (!active) return;
           all = [...all, ...d.events];
           setOutbox(d.outbox);
           setFrames(d.frames ?? []);
           setQuestions(d.questions ?? []);
           if (!d.has_more) break;
-          after = d.events.at(-1).seq;
+          after = d.events.at(-1)?.seq ?? after;
         }
         setEvents(all);
         after = all.at(-1)?.seq ?? -1;
@@ -121,7 +126,7 @@ export default function App() {
         source.onopen = () => setOnline(true);
         source.onerror = () => setOnline(false);
         source.addEventListener("session", (e) => {
-          const v = JSON.parse(e.data);
+          const v = decodeEvent(decodeJSON<WireEvent>(e.data));
           setEvents((xs) =>
             xs.some((x) => x.seq === v.seq)
               ? xs
@@ -129,15 +134,17 @@ export default function App() {
           );
         });
         source.addEventListener("state", (e) => {
-          const v = JSON.parse(e.data);
+          const v = decodeJSON<Session>(e.data);
           setSessions((xs) => xs.map((x) => (x.id === v.id ? v : x)));
         });
-        source.addEventListener("outbox", (e) => setOutbox(JSON.parse(e.data)));
+        source.addEventListener("outbox", (e) =>
+          setOutbox(decodeJSON<Outbox[]>(e.data)),
+        );
         source.addEventListener("questions", (e) =>
-          setQuestions(JSON.parse(e.data)),
+          setQuestions(decodeJSON<UserQuestion[]>(e.data)),
         );
         source.addEventListener("frame", (e) => {
-          const v = JSON.parse(e.data);
+          const v = decodeJSON<StreamFrame>(e.data);
           setFrames((xs) => (xs.some((x) => x.id === v.id) ? xs : [...xs, v]));
         });
       } catch (e) {

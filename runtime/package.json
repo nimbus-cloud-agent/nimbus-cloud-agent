@@ -1,0 +1,62 @@
+{
+  "name": "nimbus-agent-runtime",
+  "version": "0.2.0",
+  "description": "DeepSeek Harness wrapper for the Nimbus control plane, exposed through JSON-RPC 2.0 over stdio.",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=24.11.0"
+  },
+  "bin": {
+    "nimbus-agent-runtime": "dist/service.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && chmod +x dist/service.js && npm rebuild nimbus-agent-runtime --ignore-scripts",
+    "build:test": "tsc -p tsconfig.test.json && chmod +x test-dist/test/fixtures/service.js",
+    "test": "npm run build:test && node --test test-dist/test/*.test.js",
+    "prepack": "npm run build",
+    "prebuild": "node ../scripts/generate-protocol.ts",
+    "pretest": "npm run build"
+  },
+  "dependencies": {
+    "@deepseek-ai/cordis": "4.0.5",
+    "@deepseek-ai/cordis-plugin-timer": "1.1.7",
+    "@deepseek-ai/dsh": "0.2.1-rc.5",
+    "@deepseek-ai/dsh-agent": "0.2.1-rc.5",
+    "@deepseek-ai/dsh-agent-loop": "0.2.1-rc.5",
+    "@deepseek-ai/dsh-attachment": "0.2.1-rc.5",
+    "@deepseek-ai/dsh-attachment-local": "0.2.1-rc.5",
+    "@deepseek-ai/dsh-deepseek-llm-api-extensions": "0.2.1-rc.5",
+    "@deepseek-ai/dsh-launch-environment": "0.2.1-rc.5",
+    "@deepseek-ai/dsh-llm": "0.2.1-rc.5",
+    "@deepseek-ai/dsh-llm-deepseek-api-key": "0.2.1-rc.5",
+    "@deepseek-ai/dsh-plan-mode": "0.2.1-rc.5",
+    "@deepseek-ai/dsh-ptc-runtime": "0.2.1-rc.5",
+    "@deepseek-ai/dsh-session": "0.2.1-rc.5",
+    "@deepseek-ai/dsh-session-persistence": "0.2.1-rc.5",
+    "@deepseek-ai/dsh-session-persistence-jsonl": "0.2.1-rc.5",
+    "@deepseek-ai/dsh-session-projection": "0.2.1-rc.5",
+    "@deepseek-ai/dsh-skill": "0.2.1-rc.5",
+    "@deepseek-ai/dsh-system-prompt": "0.2.1-rc.5",
+    "@deepseek-ai/dsh-tools": "0.2.1-rc.5",
+    "@deepseek-ai/dsh-user-questions": "0.2.1-rc.5",
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "ajv": "8.20.0",
+    "e2b": "2.62.0",
+    "quickjs-emscripten": "0.31.0",
+    "vscode-jsonrpc": "10.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.0",
+    "typescript": "7.0.2"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nimbus-cloud-agent/nimbus-cloud-agent.git",
+    "directory": "runtime"
+  }
+}

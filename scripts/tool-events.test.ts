@@ -4,13 +4,15 @@ import {
   buildToolTree,
   flattenTools,
   toolFailed,
-  resultText,
 } from "../web/src/tool-events.ts";
-const event = (seq, type, data) => ({
-  seq,
-  type,
-  payload: { time: seq * 1000, data },
-});
+import { decodeEvent } from "../web/src/event-codec.ts";
+import type { NativeData } from "../web/src/api.ts";
+const event = (seq: number, type: string, data: NativeData) =>
+  decodeEvent({
+    seq,
+    type,
+    payload: { time: seq * 1000, data },
+  });
 
 test("native PTC start/end events and root results form one nested call tree", () => {
   const events = [
@@ -39,7 +41,11 @@ test("native PTC start/end events and root results form one nested call tree", (
     }),
   ];
   const [root] = buildToolTree(events, [
-    { payload: { type: "tool-output", callId: "child", text: "live\n" } },
+    {
+      id: 1,
+      turn_id: "turn",
+      payload: { type: "tool-output", callId: "child", text: "live\n" },
+    },
   ]);
   assert.equal(root.name, "run_code");
   assert.equal(root.children.length, 1);
@@ -48,7 +54,7 @@ test("native PTC start/end events and root results form one nested call tree", (
   assert.equal(root.children[0].ended, 3000);
   assert.equal(flattenTools([root]).length, 2);
   assert.equal(toolFailed(root.children[0]), false);
-  assert.equal(resultText(root.result), "ok");
+  assert.equal(root.result?.text, "ok");
   // Replay order does not detach child calls or create duplicate result rows.
   assert.equal(
     buildToolTree([...events].reverse(), [])[0].children[0].id,
@@ -66,13 +72,25 @@ test("nonzero command exits and native tool errors are visible as failures", () 
     { message: { isError: true, content: [{ type: "text", text: "failed" }] } },
     { error: { message: "failed" } },
   ])
-    assert.equal(toolFailed({ result }), true);
-  assert.equal(
-    toolFailed({
-      result: { content: [{ type: "text", text: '{"exitCode":0}' }] },
-    }),
-    false,
+    assert.equal(
+      toolFailed(
+        buildToolTree(
+          [event(1, "tool/result", { ...result, callId: "call" })],
+          [],
+        )[0],
+      ),
+      true,
+    );
+  const [success] = buildToolTree(
+    [
+      event(1, "tool/result", {
+        callId: "call",
+        content: [{ type: "text", text: '{"exitCode":0}' }],
+      }),
+    ],
+    [],
   );
+  assert.equal(toolFailed(success), false);
 });
 
 test("pending calls and orphan PTC results remain inspectable without invented completion", () => {
@@ -96,4 +114,43 @@ test("pending calls and orphan PTC results remain inspectable without invented c
   assert.equal(tree.length, 2);
   assert.equal(tree[0].result, undefined);
   assert.equal(tree[1].name, "skill_read");
+});
+
+test("event ingress normalizes encoded arguments and results before rendering", () => {
+  const wire = {
+    seq: 1,
+    type: "tool/ptc-dispatch",
+    payload: {
+      time: 1000,
+      data: {
+        subCallId: "call",
+        name: "sandbox_exec",
+        arguments: '{"command":"pwd","providerArgument":{"keep":true}}',
+        content: [
+          {
+            type: "text",
+            text: '{"stdout":"/workspace","exitCode":0,"truncated":false}',
+          },
+        ],
+      },
+    },
+  };
+  const decoded = decodeEvent(wire);
+  const [tool] = buildToolTree([decoded], []);
+  assert.equal(tool.args.command, "pwd");
+  assert.match(tool.args.formatted, /providerArgument/);
+  assert.equal(tool.result?.command?.stdout, "/workspace");
+  assert.equal(decoded.payload, wire.payload);
+  const unexpected = decodeEvent({
+    ...wire,
+    payload: {
+      ...wire.payload,
+      data: {
+        ...wire.payload.data,
+        arguments: { command: 42, plan: { nested: true } },
+      },
+    },
+  });
+  assert.equal(unexpected.tool?.args.command, undefined);
+  assert.equal(unexpected.tool?.args.plan, undefined);
 });

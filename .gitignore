@@ -13,3 +13,9 @@ node_modules/
 playwright-report/
 test-results/
 *.tsbuildinfo
+/internal/runtimeprotocol/generated/
+/runtime/src/generated/
+/runtime/dist/
+/runtime/test-dist/
+/release/
+/nimbus

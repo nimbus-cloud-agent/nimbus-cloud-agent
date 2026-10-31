@@ -1,185 +1,168 @@
 package executor
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
+	"errors"
 	"io"
+	"log"
 	"os"
 	"os/exec"
-	"path/filepath"
-	"strings"
-	"syscall"
+	"sync"
 	"time"
+
+	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/runtimeprotocol"
+	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/runtimeprotocol/generated"
 )
 
-type Runtime struct{ Dir string }
+var ErrRuntimeLost = runtimeprotocol.ErrDisconnected
 
-func (r Runtime) Command(ctx context.Context, name string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, "node", filepath.Join(r.Dir, name+".mjs"))
-	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME"), "LANG=en_US.UTF-8", "NODE_NO_WARNINGS=1"}
-	return cmd
+type connection struct {
+	cmd    *exec.Cmd
+	in     io.WriteCloser
+	ctx    context.Context
+	done   chan struct{}
+	peer   *runtimeprotocol.Peer
+	client generated.RuntimeClient
 }
-func (r Runtime) Call(ctx context.Context, name string, input any) (json.RawMessage, error) {
-	cmd := r.Command(ctx, name)
-	data, _ := json.Marshal(input)
-	cmd.Stdin = bytes.NewReader(append(data, '\n'))
-	var out, errout bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &errout
-	if e := cmd.Run(); e != nil {
-		return nil, fmt.Errorf("%s: %s", name, strings.TrimSpace(errout.String()))
-	}
-	var result struct {
-		Result json.RawMessage `json:"result"`
-		Error  string          `json:"error"`
-	}
-	if e := json.Unmarshal(bytes.TrimSpace(out.Bytes()), &result); e != nil {
-		return nil, fmt.Errorf("invalid %s runtime response", name)
-	}
-	if result.Error != "" {
-		return nil, fmt.Errorf("%s", result.Error)
-	}
-	return result.Result, nil
+type pipes struct {
+	io.Reader
+	io.Writer
+	in  io.Closer
+	out io.Closer
 }
 
-// Stream messages are acknowledged after their database transaction commits.
-func (r Runtime) Turn(ctx context.Context, input any, onEvent func(string, json.RawMessage) error, onQuestion func(json.RawMessage) (json.RawMessage, error)) error {
-	cmd := r.Command(ctx, "turn")
-	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
-	cmd.WaitDelay = 10 * time.Second
-	stdin, e := cmd.StdinPipe()
-	if e != nil {
-		return e
+func (p *pipes) Close() error { _ = p.in.Close(); return p.out.Close() }
+
+// Runtime owns one long-lived Node child and all multiplexed JSON-RPC requests.
+// It never replays an accepted request after a crash (tools may have side effects).
+type Runtime struct {
+	command    string
+	ctx        context.Context
+	cancel     context.CancelFunc
+	done       chan struct{}
+	mu         sync.Mutex
+	current    *connection
+	changed    chan struct{}
+	generation uint64
+	scopes     map[string]*scope
+}
+type Status struct {
+	State      string `json:"state"`
+	PID        int    `json:"pid"`
+	Generation uint64 `json:"generation"`
+}
+
+func New(command string) *Runtime {
+	ctx, cancel := context.WithCancel(context.Background())
+	r := &Runtime{command: command, scopes: map[string]*scope{}, ctx: ctx, cancel: cancel, done: make(chan struct{}), changed: make(chan struct{})}
+	go r.supervise()
+	return r
+}
+func (r *Runtime) Status() Status {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	status := Status{State: "restarting", Generation: r.generation}
+	if r.ctx.Err() != nil {
+		status.State = "stopped"
+	} else if r.current != nil {
+		status.State = "running"
+		status.PID = r.current.cmd.Process.Pid
 	}
-	stdout, e := cmd.StdoutPipe()
-	if e != nil {
-		return e
-	}
-	var errout bytes.Buffer
-	cmd.Stderr = &errout
-	if e = cmd.Start(); e != nil {
-		return e
-	}
-	enc := json.NewEncoder(stdin)
-	if e = enc.Encode(input); e != nil {
-		cmd.Process.Kill()
-		cmd.Wait()
-		return e
-	}
-	scan := bufio.NewScanner(stdout)
-	scan.Buffer(make([]byte, 65536), 32<<20)
-	var failure error
-	finished := false
-	for scan.Scan() {
-		var msg struct {
-			Event string          `json:"event"`
-			Data  json.RawMessage `json:"data"`
-			Ack   int             `json:"ack"`
+	return status
+}
+func (r *Runtime) Close() { r.cancel(); <-r.done }
+func (r *Runtime) supervise() {
+	defer close(r.done)
+	backoff := 250 * time.Millisecond
+	for r.ctx.Err() == nil {
+		started := time.Now()
+		cmd := exec.Command(r.command)
+		cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME"), "LANG=en_US.UTF-8", "NODE_NO_WARNINGS=1"}
+		// SDK diagnostics can contain credentials; protocol failures expose no raw stderr.
+		cmd.Stderr = io.Discard
+		in, err := cmd.StdinPipe()
+		if err != nil {
+			return
 		}
-		if e = json.Unmarshal(scan.Bytes(), &msg); e != nil {
-			failure = e
-			break
+		out, err := cmd.StdoutPipe()
+		if err != nil {
+			in.Close()
+			return
 		}
-		var response json.RawMessage
-		if msg.Event == "question" {
-			response, e = onQuestion(msg.Data)
+		if err = cmd.Start(); err == nil {
+			ctx, cancel := context.WithCancel(r.ctx)
+			c := &connection{cmd: cmd, in: in, ctx: ctx, done: make(chan struct{})}
+			c.peer = runtimeprotocol.New(ctx, &pipes{Reader: out, Writer: in, in: in, out: out}, func(callbackCtx context.Context, method string, params json.RawMessage) (any, error) {
+				return generated.DispatchControl(callbackCtx, controlReceiver{r}, method, params)
+			})
+			c.client = generated.RuntimeClient{Peer: c.peer}
+			r.mu.Lock()
+			r.current = c
+			r.generation++
+			close(r.changed)
+			r.changed = make(chan struct{})
+			r.mu.Unlock()
+			log.Printf("Agent runtime started: pid=%d", cmd.Process.Pid)
+			go func() {
+				select {
+				case <-r.ctx.Done():
+					_ = in.Close()
+					select {
+					case <-c.done:
+					case <-time.After(3 * time.Second):
+						_ = cmd.Process.Kill()
+					}
+				case <-c.done:
+				}
+			}()
+			<-c.peer.Done()
+			cancel()
+			close(c.done)
+			r.mu.Lock()
+			r.current = nil
+			close(r.changed)
+			r.changed = make(chan struct{})
+			r.mu.Unlock()
+			_ = in.Close()
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+			if r.ctx.Err() == nil {
+				log.Printf("Agent runtime disconnected: pid=%d; restarting", cmd.Process.Pid)
+			}
 		} else {
-			e = onEvent(msg.Event, msg.Data)
+			in.Close()
+			out.Close()
+			log.Printf("Agent runtime could not start: %v; retrying", err)
 		}
-		if e != nil {
-			failure = e
-			break
+		if time.Since(started) > 10*time.Second {
+			backoff = 250 * time.Millisecond
 		}
-		if msg.Event == "done" {
-			finished = true
+		select {
+		case <-r.ctx.Done():
+			return
+		case <-time.After(backoff):
 		}
-		if msg.Ack > 0 {
-			if e = enc.Encode(map[string]any{"ack": msg.Ack, "response": response}); e != nil {
-				failure = e
-				break
-			}
-		}
+		backoff = min(2*backoff, 5*time.Second)
 	}
-	stdin.Close()
-	if failure != nil {
-		_ = cmd.Process.Kill()
-	}
-	e = cmd.Wait()
-	if failure != nil {
-		return failure
-	}
-	if scan.Err() != nil {
-		return scan.Err()
-	}
-	if e != nil {
-		return fmt.Errorf("Harness process: %s", strings.TrimSpace(errout.String()))
-	}
-	if !finished {
-		return fmt.Errorf("Harness exited without a durable turn end")
-	}
-	return nil
 }
-func Encode(w io.Writer, v any) error { return json.NewEncoder(w).Encode(v) }
-
-func (r Runtime) CallStream(ctx context.Context, name string, input any, onOutput func(json.RawMessage) error) (json.RawMessage, error) {
-	cmd := r.Command(ctx, name)
-	data, _ := json.Marshal(input)
-	cmd.Stdin = bytes.NewReader(append(data, '\n'))
-	stdout, e := cmd.StdoutPipe()
-	if e != nil {
-		return nil, e
-	}
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if e = cmd.Start(); e != nil {
-		return nil, e
-	}
-	scan := bufio.NewScanner(stdout)
-	scan.Buffer(make([]byte, 65536), 4<<20)
-	var result json.RawMessage
-	var failure error
-	for scan.Scan() {
-		var m struct {
-			Output json.RawMessage `json:"output"`
-			Result json.RawMessage `json:"result"`
-			Error  string          `json:"error"`
+func (r *Runtime) acquire(ctx context.Context) (*connection, error) {
+	for {
+		r.mu.Lock()
+		c, changed := r.current, r.changed
+		r.mu.Unlock()
+		if r.ctx.Err() != nil {
+			return nil, errors.New("Agent runtime is stopped")
 		}
-		if e = json.Unmarshal(scan.Bytes(), &m); e != nil {
-			failure = e
-			break
+		if c != nil && c.ctx.Err() == nil {
+			return c, nil
 		}
-		if m.Error != "" {
-			failure = fmt.Errorf("%s", m.Error)
-			break
-		}
-		if m.Output != nil {
-			if e = onOutput(m.Output); e != nil {
-				failure = e
-				break
-			}
-		}
-		if m.Result != nil {
-			result = m.Result
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-r.ctx.Done():
+			return nil, errors.New("Agent runtime is stopped")
+		case <-changed:
 		}
 	}
-	if failure != nil {
-		cmd.Process.Kill()
-	}
-	e = cmd.Wait()
-	if failure != nil {
-		return nil, failure
-	}
-	if e != nil {
-		return nil, fmt.Errorf("%s: %s", name, stderr.String())
-	}
-	if scan.Err() != nil {
-		return nil, scan.Err()
-	}
-	if result == nil {
-		return nil, fmt.Errorf("runtime returned no result")
-	}
-	return result, nil
 }

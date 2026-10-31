@@ -2,13 +2,16 @@ package server
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
-	"github.com/google/uuid"
-	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/store"
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/google/uuid"
+	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/executor"
+	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/model"
+	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/store"
 )
 
 func (s *Server) scheduler() {
@@ -20,8 +23,8 @@ func (s *Server) scheduler() {
 		case <-s.ctx.Done():
 			return
 		case <-t.C:
-			var queue []store.Outbox
-			if s.S.DB.Where("status = 'queued'").Order("created_at").Find(&queue).Error != nil {
+			queue, err := s.outboxes(s.ctx, store.OutboxFilter{Status: "queued"})
+			if err != nil {
 				continue
 			}
 			for _, o := range queue {
@@ -39,7 +42,7 @@ func (s *Server) scheduler() {
 				s.running[o.SessionID] = run
 				s.mu.Unlock()
 				s.wg.Add(1)
-				go func(o store.Outbox) {
+				go func(o model.Outbox) {
 					defer s.wg.Done()
 					defer cancel()
 					defer close(run.done)
@@ -52,39 +55,47 @@ func (s *Server) scheduler() {
 		}
 	}
 }
-func (s *Server) runTurn(ctx context.Context, o store.Outbox) {
-	var sess store.Session
-	if s.S.DB.First(&sess, "id = ?", o.SessionID).Error != nil {
+func (s *Server) runTurn(ctx context.Context, o model.Outbox) {
+	sess, err := s.getSession(ctx, o.SessionID)
+	if err != nil {
 		return
 	}
-	if e := s.S.DB.Model(&o).Updates(map[string]any{"status": "starting", "error": ""}).Error; e != nil {
+	if err = s.S.UpdateOutbox(ctx, o.ID, store.OutboxChanges{Status: ptr("starting"), Error: ptr("")}); err != nil {
 		return
 	}
-	s.S.DB.Model(&sess).Update("agent_state", "starting")
+	_ = s.S.UpdateSession(ctx, sess.ID, store.SessionChanges{AgentState: ptr("starting")})
 	outcome := "completed"
 	var turnErr error
 	defer func() {
-		if ctx.Err() != nil {
+		cleanup := context.WithoutCancel(ctx)
+		if ctx.Err() != nil || errors.Is(turnErr, executor.ErrRuntimeLost) {
 			outcome = "interrupted"
 		}
 		if turnErr != nil && outcome != "interrupted" {
 			outcome = "error"
 		}
-		var current store.Outbox
-		s.S.DB.First(&current, "id = ?", o.ID)
-		updates := map[string]any{"outcome": outcome}
+		current, err := s.getOutbox(cleanup, o.ID, o.SessionID)
+		if err != nil {
+			return
+		}
+		changes := store.OutboxChanges{Outcome: &outcome}
 		if current.Status != "delivered" {
-			updates["status"] = "failed"
+			changes.Status = ptr("failed")
 			if turnErr == nil {
 				turnErr = fmt.Errorf("本轮未能送达 Harness")
 			}
 		}
 		if turnErr != nil {
-			updates["error"] = s.redact(turnErr.Error())
+			changes.Error = ptr(s.redact(turnErr.Error()))
 		}
-		s.S.DB.Model(&o).Updates(updates)
-		s.S.DB.Model(&sess).Updates(map[string]any{"agent_state": "idle", "last_active_at": time.Now()})
+		_ = s.S.Transaction(cleanup, func(tx *store.Store) error {
+			if err := tx.UpdateOutbox(cleanup, o.ID, changes); err != nil {
+				return err
+			}
+			return tx.UpdateSession(cleanup, sess.ID, store.SessionChanges{AgentState: ptr("idle"), LastActiveAt: ptr(time.Now())})
+		})
 	}()
+
 	if sess.LockedMode == nil {
 		turnErr = fmt.Errorf("session preset was not initialized")
 		return
@@ -103,124 +114,170 @@ func (s *Server) runTurn(ctx context.Context, o store.Outbox) {
 		return
 	}
 	dir, _ = filepath.Abs(dir)
-	events := []store.Event{}
-	if turnErr = s.S.DB.Where("session_id = ?", o.SessionID).Order("seq").Find(&events).Error; turnErr != nil {
+	events, err := s.events(ctx, store.EventFilter{SessionID: o.SessionID, After: -1})
+	if err != nil {
+		turnErr = err
 		return
 	}
-	raw := []json.RawMessage{}
-	for _, e := range events {
-		raw = append(raw, e.Payload)
+	records := make([]model.NativeRecord, 0, len(events))
+	for _, event := range events {
+		records = append(records, event.Payload)
 	}
-	skills := []store.Skill{}
-	s.S.DB.Preload("Files").Where("enabled = true").Find(&skills)
-	mcps := []store.MCPServer{}
-	s.S.DB.Where("enabled = true").Find(&mcps)
-	token := uuid.NewString() + uuid.NewString()
-	s.mu.Lock()
-	s.tokens[token] = tokenScope{o.SessionID, o.TurnID}
-	s.mu.Unlock()
-	defer func() { s.mu.Lock(); delete(s.tokens, token); s.mu.Unlock() }()
-	recovery := s.interruptedFragments(o.SessionID)
-	input := map[string]any{"recovery": recovery, "session_id": o.SessionID, "turn_id": o.TurnID, "message_id": o.ClientMsgID, "message": o.Content, "options": o.Options, "header": sess.Header, "records": raw, "work_dir": dir, "api_key": s.S.Get("deepseek_api_key", s.C.DeepSeekKey), "harness_path": s.C.HarnessPath, "skills": skills, "tools_url": s.BaseURL + "/internal/tools", "token": token, "mcp": s.mcpTools(ctx, mcps)}
-	input["session_mode"] = *sess.LockedMode
-	input["images"] = o.Images
-	var images []store.Image
-	if turnErr = s.S.DB.Where("session_id=? AND id IN (SELECT (jsonb_array_elements(images)->>'id')::uuid FROM outbox_messages WHERE session_id=? AND (status='delivered' OR id=?))", o.SessionID, o.SessionID, o.ID).Find(&images).Error; turnErr != nil {
+	skillRows, err := s.S.Skills(ctx, true)
+	if err != nil {
+		turnErr = err
 		return
 	}
-	attachments := make([]map[string]any, 0, len(images))
-	for _, img := range images {
-		attachments = append(attachments, map[string]any{"ref": img.Ref, "data": img.Data})
+	skills := make([]model.Skill, 0, len(skillRows))
+	for _, row := range skillRows {
+		skills = append(skills, skillModel(row))
 	}
-	input["attachments"] = attachments
-	turnErr = s.R.Turn(ctx, input, func(kind string, data json.RawMessage) error {
-		switch kind {
+	mcpRows, err := s.S.MCPServers(ctx, true)
+	if err != nil {
+		turnErr = err
+		return
+	}
+	mcps := make([]model.MCPServer, 0, len(mcpRows))
+	for _, row := range mcpRows {
+		mcps = append(mcps, model.MCPServer(row))
+	}
+	recovery, err := s.interruptedFragments(ctx, o.SessionID)
+	if err != nil {
+		turnErr = err
+		return
+	}
+	imageRows, err := s.S.TurnImages(ctx, o.SessionID, o.ID)
+	if err != nil {
+		turnErr = err
+		return
+	}
+	attachments := make([]model.Attachment, 0, len(imageRows))
+	for _, row := range imageRows {
+		img := model.Image(row)
+		attachments = append(attachments, model.Attachment{Ref: img.Ref, Data: img.Data})
+	}
+	input := executor.TurnInput{SessionID: o.SessionID, TurnID: o.TurnID, MessageID: o.ClientMsgID, Message: o.Content, SessionMode: *sess.LockedMode, Options: o.Options, Header: sess.Header, Records: records, WorkDir: dir, APIKey: s.S.Get("deepseek_api_key", s.C.DeepSeekKey), Skills: skills, MCP: s.mcpTools(ctx, mcps), Images: o.Images, Attachments: attachments, Recovery: recovery}
+	turnErr = s.R.Turn(ctx, input, func(event model.TurnEvent) error {
+		// Native cancellation may flush history after the original request context has
+		// been cancelled. Its durable acknowledgements still finish before scope exit.
+		persist := context.WithoutCancel(ctx)
+		switch event.Kind {
 		case "header":
-			return s.S.DB.Model(&sess).Update("header", data).Error
+			return s.S.UpdateSession(persist, sess.ID, store.SessionChanges{Header: event.Header})
 		case "ready":
-			return s.S.DB.Model(&sess).Update("agent_state", "running").Error
+			return s.S.UpdateSession(persist, sess.ID, store.SessionChanges{AgentState: ptr("running")})
 		case "frame":
-			return s.S.DB.Create(&store.StreamFrame{SessionID: o.SessionID, TurnID: o.TurnID, Payload: data, CreatedAt: time.Now()}).Error
+			return s.S.CreateFrame(persist, store.StreamFrame{SessionID: o.SessionID, TurnID: o.TurnID, Payload: *event.Frame, CreatedAt: time.Now()})
 		case "record":
-			if e := s.S.Append(o.SessionID, o.ID, data); e != nil {
-				return e
+			if err := s.appendRecord(persist, o.SessionID, o.ID, *event.Record); err != nil {
+				return err
 			}
-			var ev struct {
-				Type string `json:"type"`
-			}
-			json.Unmarshal(data, &ev)
-			if ev.Type == "user/message" && sess.Title == "新对话" {
+			if event.Record.Type == "user/message" && sess.Title == "新对话" {
 				title := []rune(o.Content)
 				if len(title) == 0 {
 					title = []rune("图片对话")
 				}
-				s.S.DB.Model(&sess).Update("title", string(title[:min(40, len(title))]))
+				return s.S.UpdateSession(persist, sess.ID, store.SessionChanges{Title: ptr(string(title[:min(40, len(title))]))})
 			}
-			return nil
 		case "flushing":
-			return s.S.DB.Model(&sess).Update("agent_state", "flushing").Error
+			return s.S.UpdateSession(persist, sess.ID, store.SessionChanges{AgentState: ptr("flushing")})
 		case "done":
-			var d struct {
-				Outcome string `json:"outcome"`
-				Error   string `json:"error"`
-				Seq     int64  `json:"seq"`
+			latest, err := s.getSession(persist, o.SessionID)
+			if err != nil {
+				return err
 			}
-			json.Unmarshal(data, &d)
-			var latest store.Session
-			if e := s.S.DB.First(&latest, "id = ?", o.SessionID).Error; e != nil {
-				return e
-			}
-			if latest.SyncedSeq != d.Seq {
+			if latest.SyncedSeq != event.Done.Seq {
 				return fmt.Errorf("history synchronization did not catch up")
 			}
-			if d.Outcome != "" {
-				outcome = d.Outcome
+			if event.Done.Outcome != "" {
+				outcome = event.Done.Outcome
 			}
-			if d.Error != "" {
-				return fmt.Errorf("%s", d.Error)
+			if event.Done.Error != "" {
+				return fmt.Errorf("%s", event.Done.Error)
 			}
-		case "error":
-			var msg string
-			json.Unmarshal(data, &msg)
-			return fmt.Errorf("%s", msg)
 		}
 		return nil
-	}, func(raw json.RawMessage) (json.RawMessage, error) {
-		return s.waitQuestion(ctx, o, raw)
+	}, func(opCtx context.Context, request model.QuestionRequest) (model.QuestionAnswer, error) {
+		return s.waitQuestion(opCtx, o, request)
+	}, func(opCtx context.Context, call model.ToolCall) (model.ToolResult, error) {
+		result, err := s.executeTool(opCtx, toolScope{o.SessionID, o.TurnID}, call)
+		if err != nil {
+			return result, fmt.Errorf("%s", s.redact(err.Error()))
+		}
+		return result, nil
+	})
+}
+
+// The application combines DAO operations while Store owns row locking, SQL and
+// serialization. Acknowledgement follows this complete atomic business update.
+func (s *Server) appendRecord(ctx context.Context, sid, oid string, record model.NativeRecord) error {
+	return s.S.Transaction(ctx, func(tx *store.Store) error {
+		row, err := tx.LockSession(ctx, sid)
+		if err != nil {
+			return err
+		}
+		sess := model.Session(row)
+		if record.Seq <= sess.SyncedSeq {
+			return nil
+		}
+		if record.Seq != sess.SyncedSeq+1 {
+			return fmt.Errorf("non-contiguous Harness seq: got %d, expected %d", record.Seq, sess.SyncedSeq+1)
+		}
+		event := model.Event{SessionID: sid, Seq: record.Seq, Type: record.Type, Payload: record, CreatedAt: time.Now()}
+		if err = tx.CreateEvent(ctx, store.Event(event)); err != nil {
+			return err
+		}
+		changes := store.SessionChanges{SyncedSeq: &record.Seq, LastActiveAt: ptr(time.Now())}
+		if record.Type == "user/message" {
+			out, err := tx.Outbox(ctx, oid, sid)
+			if err != nil {
+				return err
+			}
+			if out.Status == "starting" {
+				if err = tx.UpdateOutbox(ctx, oid, store.OutboxChanges{Status: ptr("delivered"), DeliveredSeq: &record.Seq}); err != nil {
+					return err
+				}
+			}
+		}
+		if record.Type == "plan/mode" && record.Data.Active != nil && !*record.Data.Active {
+			options := sess.Options
+			options.Plan = false
+			changes.Options = &options
+		}
+		if err = tx.UpdateSession(ctx, sid, changes); err != nil {
+			return err
+		}
+		return tx.NotifySession(ctx, sid)
 	})
 }
 
 // Preserve the visible prefix of a crashed model attempt as explicit context.
 // Original DSH records remain untouched; native resume still closes the dead turn.
-func (s *Server) interruptedFragments(sid string) string {
-	var turns []store.Outbox
-	s.S.DB.Where("session_id = ? AND outcome = 'interrupted'", sid).Find(&turns)
+func (s *Server) interruptedFragments(ctx context.Context, sid string) (string, error) {
+	turns, err := s.outboxes(ctx, store.OutboxFilter{SessionID: sid, Outcome: "interrupted"})
+	if err != nil {
+		return "", err
+	}
 	var result string
 	for _, o := range turns {
-		var frames []store.StreamFrame
-		s.S.DB.Where("turn_id = ?", o.TurnID).Order("id").Find(&frames)
+		frames, err := s.frames(ctx, store.FrameFilter{TurnID: o.TurnID})
+		if err != nil {
+			return "", err
+		}
 		texts := map[string]string{}
 		closed := map[string]bool{}
 		order := []string{}
 		for _, f := range frames {
-			var v struct {
-				Type    string `json:"type"`
-				Attempt string `json:"attemptId"`
-				Chunk   struct {
-					Type string `json:"type"`
-					Text string `json:"text"`
-				} `json:"chunk"`
-			}
-			json.Unmarshal(f.Payload, &v)
-			if _, ok := texts[v.Attempt]; !ok {
-				order = append(order, v.Attempt)
-				texts[v.Attempt] = ""
+			v := f.Payload
+			if _, ok := texts[v.AttemptID]; !ok {
+				order = append(order, v.AttemptID)
+				texts[v.AttemptID] = ""
 			}
 			if v.Type == "end" {
-				closed[v.Attempt] = true
+				closed[v.AttemptID] = true
 			}
-			if v.Chunk.Type == "text-delta" || v.Chunk.Type == "reasoning-delta" {
-				texts[v.Attempt] += v.Chunk.Text
+			if v.Chunk != nil && (v.Chunk.Type == "text-delta" || v.Chunk.Type == "reasoning-delta") {
+				texts[v.AttemptID] += v.Chunk.Text
 			}
 		}
 		for _, id := range order {
@@ -229,5 +286,5 @@ func (s *Server) interruptedFragments(sid string) string {
 			}
 		}
 	}
-	return result
+	return result, nil
 }

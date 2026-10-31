@@ -16,12 +16,7 @@ import {
   Workflow,
 } from "lucide-react";
 import { Fold } from "./components";
-import {
-  parseValue,
-  resultText,
-  toolFailed,
-  type ToolNode,
-} from "./tool-events";
+import { toolFailed, type ToolNode } from "./tool-events";
 
 function toolInfo(node: ToolNode) {
   const labels: Record<string, [string, typeof Cloud]> = {
@@ -100,41 +95,35 @@ function Output({ node }: { node: ToolNode }) {
     return node.output ? (
       <CodeSection label="实时输出" value={node.output} />
     ) : null;
-  const raw = resultText(node.result);
-  const value = parseValue(raw);
-  if (
-    value &&
-    typeof value === "object" &&
-    ("stdout" in value || "stderr" in value)
-  )
+  const result = node.result;
+  if (result.command) {
+    const value = result.command;
     return (
       <>
-        {value.stdout && (
-          <CodeSection label="输出" value={String(value.stdout)} />
-        )}
+        {value.stdout && <CodeSection label="输出" value={value.stdout} />}
         {value.stderr && (
-          <CodeSection label="标准错误" value={String(value.stderr)} error />
+          <CodeSection label="标准错误" value={value.stderr} error />
         )}
         <div className="tool-result-meta">
-          {typeof value.exitCode === "number" && (
-            <span>退出码 {value.exitCode}</span>
-          )}
+          {value.exitCode !== undefined && <span>退出码 {value.exitCode}</span>}
           {value.truncated && <span>输出已截断</span>}
         </div>
       </>
     );
-  if (value && typeof value === "object" && typeof value.content === "string")
-    return <CodeSection label="文件内容" value={value.content} />;
-  return raw ? (
+  }
+  if (result.fileContent !== undefined)
+    return <CodeSection label="文件内容" value={result.fileContent} />;
+  return result.text ? (
     <CodeSection
-      label={toolFailed(node) ? "错误" : "结果"}
-      value={typeof value === "object" ? JSON.stringify(value, null, 2) : raw}
-      error={toolFailed(node)}
+      label={result.failed ? "错误" : "结果"}
+      value={result.formatted}
+      error={result.failed}
     />
   ) : (
     <p className="tool-empty-result">工具执行完成，无文本输出。</p>
   );
 }
+
 export function ToolCall({
   node,
   settled,
@@ -218,10 +207,7 @@ export function ToolCall({
             ) : node.name === "sandbox_write_file" ? (
               <CodeSection label="写入内容" value={node.args.content ?? ""} />
             ) : node.name === "sandbox_read_file" ? null : (
-              <CodeSection
-                label="参数"
-                value={JSON.stringify(node.args, null, 2)}
-              />
+              <CodeSection label="参数" value={node.args.formatted} />
             )}
             {node.children.length > 0 && (
               <div className="tool-children" aria-label="子工具调用">

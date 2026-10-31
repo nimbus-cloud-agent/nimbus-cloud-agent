@@ -68,9 +68,18 @@ async function stream(path) {
     },
   };
 }
-async function completed(sid, count) {
+async function completed(sid, count, dismissPlan = false) {
   return until(async () => {
     const d = await api(`/sessions/${sid}/events`);
+    if (dismissPlan) {
+      const pending = d.questions.find((q) => q.status === "pending");
+      // This scenario only saves a plan file; defer any native review instead
+      // of approving implementation or waiting forever for a human answer.
+      if (pending)
+        await api(`/sessions/${sid}/questions/${pending.id}/answer`, {
+          dismissed: true,
+        });
+    }
     if (d.outbox.length < count || !d.outbox[count - 1].outcome) return;
     assert.equal(
       d.outbox[count - 1].outcome,
@@ -167,7 +176,7 @@ try {
   console.log("PASS no browser session-list polling");
   await api(path, { title: "SSE 即时更新验证" }, "PATCH");
   await page.getByRole("heading", { name: "SSE 即时更新验证" }).waitFor();
-  assert.ok(
+  await until(() =>
     list.frames.some((f) =>
       f.data?.some((x) => x.title === "SSE 即时更新验证"),
     ),
@@ -256,7 +265,7 @@ try {
     thinking: "max",
     plan: true,
   });
-  const result = await completed(ptc.id, 1);
+  const result = await completed(ptc.id, 1, true);
   assert.ok(
     result.events.some(
       (e) =>

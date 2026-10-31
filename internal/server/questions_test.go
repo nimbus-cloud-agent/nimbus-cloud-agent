@@ -2,20 +2,19 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/store"
+	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/model"
 )
 
 func TestPlanReviewLifecycle(t *testing.T) {
-	db, _ := optionsDB(t, "999")
+	db := optionsDB(t)
 	r := optionsRouter(db)
-	s := &Server{S: &store.Store{DB: db}}
+	s := &Server{S: db}
 	a := expectOptions(t, r, 201, "POST", "/sessions", nil)
 	b := expectOptions(t, r, 201, "POST", "/sessions", nil)
 	sid := a["id"].(string)
@@ -24,18 +23,25 @@ func TestPlanReviewLifecycle(t *testing.T) {
 	opts["plan"] = true
 	expectOptions(t, r, 200, "PATCH", path, gin.H{"options": opts})
 	out := expectOptions(t, r, 202, "POST", path+"/messages", gin.H{"message": "plan test", "client_msg_id": uuid.NewString()})
-	var o store.Outbox
-	db.First(&o, "id=?", out["id"])
-	request := store.Raw(gin.H{"questions": []gin.H{{"id": "plan-review", "options": []gin.H{{"label": "Approve"}, {"label": "Keep planning"}}, "detail": "# Plan\nTest", "intent": gin.H{"kind": "plan-review", "approve": "Approve"}}}})
+	row, err := db.Outbox(context.Background(), out["id"].(string), sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	o := model.Outbox(row)
+	request := model.QuestionRequest{Questions: []model.Question{{ID: "plan-review", Options: []model.QuestionOption{{Label: "Approve"}, {Label: "Keep planning"}}, Detail: "# Plan\nTest", Intent: &model.QuestionIntent{Kind: "plan-review", Approve: "Approve"}}}}
 	answer := gin.H{"answers": []gin.H{{"id": "plan-review", "selected": []string{"Approve"}}}}
-	start := func() (store.UserQuestion, context.CancelFunc, <-chan error) {
+	start := func() (model.UserQuestion, context.CancelFunc, <-chan error) {
 		ctx, cancel := context.WithCancel(context.Background())
 		t.Cleanup(cancel)
 		done := make(chan error, 1)
 		go func() { _, e := s.waitQuestion(ctx, o, request); done <- e }()
 		deadline := time.Now().Add(3 * time.Second)
 		for time.Now().Before(deadline) {
-			for _, q := range s.questions(sid) {
+			questions, err := s.questions(ctx, sid)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, q := range questions {
 				if q.Status == "pending" {
 					return q, cancel, done
 				}
@@ -43,7 +49,7 @@ func TestPlanReviewLifecycle(t *testing.T) {
 			time.Sleep(10 * time.Millisecond)
 		}
 		t.Fatal("question never became visible")
-		return store.UserQuestion{}, cancel, done
+		return model.UserQuestion{}, cancel, done
 	}
 	await := func(done <-chan error, wantError bool) {
 		t.Helper()
@@ -77,7 +83,7 @@ func TestPlanReviewLifecycle(t *testing.T) {
 	if sess["options"].(map[string]any)["plan"] != true {
 		t.Fatal("approval skipped native transition")
 	}
-	if e := s.S.Append(sid, o.ID, store.Raw(gin.H{"seq": 0, "type": "plan/mode", "data": gin.H{"active": false}})); e != nil {
+	if e := s.appendRecord(context.Background(), sid, o.ID, model.NativeRecord{Seq: 0, Type: "plan/mode", Data: model.EventData{Active: ptr(false)}}); e != nil {
 		t.Fatal(e)
 	}
 	sess = expectOptions(t, r, 200, "GET", path, nil)
@@ -89,7 +95,7 @@ func TestPlanReviewLifecycle(t *testing.T) {
 	await(done, true)
 	expectOptions(t, r, 409, "POST", path+"/questions/"+q.ID+"/answer", answer)
 	q, _, done = start()
-	if e := interruptQuestions(db); e != nil {
+	if e := db.InterruptQuestions(context.Background(), ""); e != nil {
 		t.Fatal(e)
 	}
 	await(done, true)
@@ -110,10 +116,8 @@ func TestPlanReviewLifecycle(t *testing.T) {
 		t.Fatal(statuses)
 	}
 	await(done, false)
-	var persisted store.UserQuestion
-	db.First(&persisted, "id=?", q.ID)
-	var got questionAnswer
-	if json.Unmarshal(persisted.Answer, &got) != nil || persisted.ResolvedAt == nil {
-		t.Fatal("decision not durable")
+	persisted, err := db.Question(context.Background(), q.ID)
+	if err != nil || persisted.Answer == nil || persisted.ResolvedAt == nil {
+		t.Fatal("decision not durable", err)
 	}
 }

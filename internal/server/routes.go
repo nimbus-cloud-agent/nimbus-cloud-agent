@@ -4,43 +4,48 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
-	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/store"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/model"
+	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/store"
 )
 
 func (s *Server) routes(r *gin.Engine) {
 	r.GET("/api/sessions/stream", s.sessionsStream)
 	r.GET("/api/sessions", func(c *gin.Context) {
-		var rows []store.Session
-		if e := s.S.DB.Order("last_active_at DESC").Find(&rows).Error; e != nil {
+		rows, e := s.S.Sessions(c.Request.Context())
+		if e != nil {
 			s.fail(c, 500, e)
 			return
 		}
-		out := []gin.H{}
+		out := []model.SessionView{}
 		for _, x := range rows {
-			out = append(out, s.view(x))
+			view, err := s.view(c.Request.Context(), model.Session(x))
+			if err != nil {
+				s.fail(c, 500, err)
+				return
+			}
+			out = append(out, view)
 		}
 		c.JSON(200, out)
 	})
 	r.POST("/api/sessions", func(c *gin.Context) {
-		sess := store.Session{ID: uuid.NewString(), Title: "新对话", AgentState: "idle", SyncedSeq: -1, Options: store.Raw(gin.H{"model": "deepseek-flash", "thinking": "off", "plan": false, "mode": "standard"}), CreatedAt: time.Now(), LastActiveAt: time.Now()}
-		if e := s.S.DB.Create(&sess).Error; e != nil {
+		sess := model.Session{ID: uuid.NewString(), Title: "新对话", AgentState: "idle", SyncedSeq: -1, Options: model.DefaultOptions(), CreatedAt: time.Now(), LastActiveAt: time.Now()}
+		if e := s.S.CreateSession(c.Request.Context(), store.Session(sess)); e != nil {
 			s.fail(c, 500, e)
 			return
 		}
-		c.JSON(201, s.view(sess))
+		s.respondSession(c, 201, sess)
 	})
 	r.GET("/api/sessions/:id", func(c *gin.Context) {
 		if x, ok := s.session(c); ok {
-			c.JSON(200, s.view(x))
+			s.respondSession(c, 200, x)
 		}
 	})
 	r.PATCH("/api/sessions/:id", func(c *gin.Context) {
@@ -49,47 +54,55 @@ func (s *Server) routes(r *gin.Engine) {
 			return
 		}
 		var in struct {
-			Title   *string         `json:"title"`
-			Options json.RawMessage `json:"options"`
+			Title   *string        `json:"title"`
+			Options *model.Options `json:"options"`
 		}
 		if e := c.ShouldBindJSON(&in); e != nil {
 			s.fail(c, 400, e)
 			return
 		}
-		m := map[string]any{}
+		changes := store.SessionChanges{}
 		if in.Title != nil {
 			t := strings.TrimSpace(*in.Title)
 			if t == "" {
 				s.fail(c, 400, fmt.Errorf("标题不能为空"))
 				return
 			}
-			m["title"] = string([]rune(t)[:min(len([]rune(t)), 100)])
+			title := string([]rune(t)[:min(len([]rune(t)), 100)])
+			changes.Title = &title
 		}
 		if in.Options != nil {
-			if e := validOptions(in.Options); e != nil {
+			if e := validOptions(*in.Options); e != nil {
 				s.fail(c, 400, e)
 				return
 			}
-			m["options"] = in.Options
+			changes.Options = in.Options
 		}
 		status := 500
-		if e := s.S.DB.Transaction(func(tx *gorm.DB) error {
-			if e := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&x, "id = ?", x.ID).Error; e != nil {
+		if e := s.S.Transaction(c.Request.Context(), func(tx *store.Store) error {
+			row, e := tx.LockSession(c.Request.Context(), x.ID)
+			if e != nil {
 				return e
 			}
+			x = model.Session(row)
 			if in.Options != nil {
-				if e := checkPreset(x, in.Options); e != nil {
+				if e := checkPreset(x, *in.Options); e != nil {
 					status = 409
 					return e
 				}
 			}
-			return tx.Model(&x).Updates(m).Error
+			return tx.UpdateSession(c.Request.Context(), x.ID, changes)
 		}); e != nil {
 			s.fail(c, status, e)
 			return
 		}
-		s.S.DB.First(&x, "id = ?", x.ID)
-		c.JSON(200, s.view(x))
+		var reloadErr error
+		x, reloadErr = s.getSession(c.Request.Context(), x.ID)
+		if reloadErr != nil {
+			s.fail(c, 500, reloadErr)
+			return
+		}
+		s.respondSession(c, 200, x)
 	})
 	r.DELETE("/api/sessions/:id", s.deleteSession)
 	r.POST("/api/sessions/:id/messages", s.message)
@@ -98,12 +111,14 @@ func (s *Server) routes(r *gin.Engine) {
 		if !ok {
 			return
 		}
-		if e := s.S.DB.Transaction(func(tx *gorm.DB) error {
-			if e := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&x, "id = ?", x.ID).Error; e != nil {
+		if e := s.S.Transaction(c.Request.Context(), func(tx *store.Store) error {
+			row, e := tx.LockSession(c.Request.Context(), x.ID)
+			if e != nil {
 				return e
 			}
-			var out store.Outbox
-			if e := tx.First(&out, "id = ? AND session_id = ? AND status = 'failed'", c.Param("outbox"), x.ID).Error; e != nil {
+			x = model.Session(row)
+			out, e := tx.Outbox(c.Request.Context(), c.Param("outbox"), x.ID)
+			if e != nil || out.Status != "failed" {
 				return fmt.Errorf("只有未送达的失败消息可以重发")
 			}
 			if e := checkPreset(x, out.Options); e != nil {
@@ -112,7 +127,7 @@ func (s *Server) routes(r *gin.Engine) {
 			if e := validOptions(out.Options); e != nil {
 				return e
 			}
-			return tx.Model(&out).Updates(map[string]any{"status": "queued", "error": "", "outcome": "", "created_at": time.Now()}).Error
+			return tx.UpdateOutbox(c.Request.Context(), out.ID, store.OutboxChanges{Status: ptr("queued"), Error: ptr(""), Outcome: ptr(""), CreatedAt: ptr(time.Now())})
 		}); e != nil {
 			s.fail(c, 409, e)
 			return
@@ -128,18 +143,31 @@ func (s *Server) routes(r *gin.Engine) {
 		if v, e := strconv.ParseInt(c.Query("after_seq"), 10, 64); e == nil {
 			after = v
 		}
-		events := []store.Event{}
-		q := s.S.DB.Where("session_id = ? AND seq > ?", x.ID, after)
-		if t := c.Query("types"); t != "" {
-			q = q.Where("type IN ?", strings.Split(t, ","))
+		filter := store.EventFilter{SessionID: x.ID, After: after, Limit: 1000}
+		if types := c.Query("types"); types != "" {
+			filter.Types = strings.Split(types, ",")
 		}
-		if e := q.Order("seq").Limit(1000).Find(&events).Error; e != nil {
-			s.fail(c, 500, e)
+		events, err := s.events(c.Request.Context(), filter)
+		if err != nil {
+			s.fail(c, 500, err)
 			return
 		}
-		outbox := []store.Outbox{}
-		s.S.DB.Where("session_id = ?", x.ID).Order("created_at").Find(&outbox)
-		c.JSON(200, gin.H{"events": events, "outbox": outbox, "has_more": len(events) == 1000, "frames": s.frames(x.ID), "questions": s.questions(x.ID)})
+		outbox, err := s.outboxes(c.Request.Context(), store.OutboxFilter{SessionID: x.ID})
+		if err != nil {
+			s.fail(c, 500, err)
+			return
+		}
+		frames, err := s.frames(c.Request.Context(), store.FrameFilter{SessionID: x.ID})
+		if err != nil {
+			s.fail(c, 500, err)
+			return
+		}
+		questions, err := s.questions(c.Request.Context(), x.ID)
+		if err != nil {
+			s.fail(c, 500, err)
+			return
+		}
+		c.JSON(200, model.History{Events: events, Outbox: outbox, Frames: frames, Questions: questions, HasMore: len(events) == 1000})
 	})
 	r.GET("/api/sessions/:id/stream", s.stream)
 	r.POST("/api/sessions/:id/stop", func(c *gin.Context) {
@@ -181,7 +209,12 @@ func (s *Server) routes(r *gin.Engine) {
 			return
 		}
 		defer l.Unlock()
-		s.S.DB.First(&x, "id = ?", x.ID)
+		var reloadErr error
+		x, reloadErr = s.getSession(c.Request.Context(), x.ID)
+		if reloadErr != nil {
+			s.fail(c, 500, reloadErr)
+			return
+		}
 		if x.AgentState != "idle" {
 			s.fail(c, 409, fmt.Errorf("请先停止当前轮次"))
 			return
@@ -227,37 +260,37 @@ func (s *Server) message(c *gin.Context) {
 		s.fail(c, 400, fmt.Errorf("请先在全局设置中填写 DeepSeek API key"))
 		return
 	}
-	var out store.Outbox
+	var out model.Outbox
 	status := 500
-	if e := s.S.DB.Transaction(func(tx *gorm.DB) error {
-		if e := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&x, "id = ?", x.ID).Error; e != nil {
+	if e := s.S.Transaction(c.Request.Context(), func(tx *store.Store) error {
+		row, e := tx.LockSession(c.Request.Context(), x.ID)
+		if e != nil {
 			return e
 		}
+		x = model.Session(row)
 		// Idempotent retries return the original snapshot even after controls change.
-		e := tx.First(&out, "session_id = ? AND client_msg_id = ?", x.ID, in.ClientMsgID).Error
+		stored, e := tx.OutboxByClient(c.Request.Context(), x.ID, in.ClientMsgID)
+		out = model.Outbox(stored)
 		if e == nil {
 			return nil
 		}
-		if !errors.Is(e, gorm.ErrRecordNotFound) {
+		if !errors.Is(e, store.ErrNotFound) {
 			return e
 		}
-		var opts map[string]any
-		if e := json.Unmarshal(x.Options, &opts); e != nil {
-			return e
-		}
+		opts := x.Options
 		if in.Model != nil {
-			opts["model"] = *in.Model
+			opts.Model = *in.Model
 		}
 		if in.Thinking != nil {
-			opts["thinking"] = *in.Thinking
+			opts.Thinking = *in.Thinking
 		}
 		if in.Plan != nil {
-			opts["plan"] = *in.Plan
+			opts.Plan = *in.Plan
 		}
 		if in.Mode != nil {
-			opts["mode"] = *in.Mode
+			opts.Mode = *in.Mode
 		}
-		options := store.Raw(opts)
+		options := opts
 		if e := validOptions(options); e != nil {
 			status = 400
 			return e
@@ -266,17 +299,17 @@ func (s *Server) message(c *gin.Context) {
 			status = 409
 			return e
 		}
-		images, e := messageImages(tx, x.ID, in.ImageIDs)
+		images, e := messageImages(c.Request.Context(), tx, x.ID, in.ImageIDs)
 		if e != nil {
 			status = 400
 			return e
 		}
-		out = store.Outbox{ID: uuid.NewString(), SessionID: x.ID, TurnID: uuid.NewString(), ClientMsgID: in.ClientMsgID, Content: in.Message, Images: images, Options: options, Status: "queued", CreatedAt: time.Now()}
+		out = model.Outbox{ID: uuid.NewString(), SessionID: x.ID, TurnID: uuid.NewString(), ClientMsgID: in.ClientMsgID, Content: in.Message, Images: images, Options: options, Status: "queued", CreatedAt: time.Now()}
 		// The outbox trigger freezes the session preset in this transaction.
-		if e := tx.Create(&out).Error; e != nil {
+		if e := tx.CreateOutbox(c.Request.Context(), store.Outbox(out)); e != nil {
 			return e
 		}
-		return tx.Model(&x).Update("last_active_at", time.Now()).Error
+		return tx.UpdateSession(c.Request.Context(), x.ID, store.SessionChanges{LastActiveAt: ptr(time.Now())})
 	}); e != nil {
 		s.fail(c, status, e)
 		return
@@ -284,13 +317,7 @@ func (s *Server) message(c *gin.Context) {
 	c.JSON(202, out)
 }
 
-func checkPreset(sess store.Session, options json.RawMessage) error {
-	var opts struct {
-		Mode string `json:"mode"`
-	}
-	if e := json.Unmarshal(options, &opts); e != nil {
-		return e
-	}
+func checkPreset(sess model.Session, opts model.Options) error {
 	if sess.LockedMode != nil && opts.Mode != *sess.LockedMode {
 		return fmt.Errorf("此会话的工具模式已固定；切换 Standard / PTC 请新建会话")
 	}
@@ -320,8 +347,8 @@ func (s *Server) stream(c *gin.Context) {
 	lastState, lastOutbox, lastQuestions := "", "", ""
 	var frameAfter int64
 	for {
-		events := []store.Event{}
-		if e := s.S.DB.Where("session_id = ? AND seq > ?", x.ID, after).Order("seq").Limit(1000).Find(&events).Error; e != nil {
+		events, err := s.events(c.Request.Context(), store.EventFilter{SessionID: x.ID, After: after, Limit: 1000})
+		if err != nil {
 			return
 		}
 		for _, ev := range events {
@@ -331,28 +358,40 @@ func (s *Server) stream(c *gin.Context) {
 			}
 			after = ev.Seq
 		}
-		if s.S.DB.First(&x, "id = ?", x.ID).Error != nil {
+		if x, err = s.getSession(c.Request.Context(), x.ID); err != nil {
 			return
 		}
-		st, _ := json.Marshal(s.view(x))
+		view, err := s.view(c.Request.Context(), x)
+		if err != nil {
+			return
+		}
+		st, _ := json.Marshal(view)
 		if string(st) != lastState {
 			fmt.Fprintf(c.Writer, "event: state\ndata: %s\n\n", st)
 			lastState = string(st)
 		}
-		out := []store.Outbox{}
-		s.S.DB.Where("session_id = ?", x.ID).Order("created_at").Find(&out)
+		out, err := s.outboxes(c.Request.Context(), store.OutboxFilter{SessionID: x.ID})
+		if err != nil {
+			return
+		}
 		ob, _ := json.Marshal(out)
 		if string(ob) != lastOutbox {
 			fmt.Fprintf(c.Writer, "event: outbox\ndata: %s\n\n", ob)
 			lastOutbox = string(ob)
 		}
-		questions, _ := json.Marshal(s.questions(x.ID))
+		items, err := s.questions(c.Request.Context(), x.ID)
+		if err != nil {
+			return
+		}
+		questions, _ := json.Marshal(items)
 		if string(questions) != lastQuestions {
 			fmt.Fprintf(c.Writer, "event: questions\ndata: %s\n\n", questions)
 			lastQuestions = string(questions)
 		}
-		frames := []store.StreamFrame{}
-		s.S.DB.Where("session_id = ? AND id > ?", x.ID, frameAfter).Order("id").Find(&frames)
+		frames, err := s.frames(c.Request.Context(), store.FrameFilter{SessionID: x.ID, After: frameAfter})
+		if err != nil {
+			return
+		}
 		for _, f := range frames {
 			raw, _ := json.Marshal(f)
 			fmt.Fprintf(c.Writer, "event: frame\ndata: %s\n\n", raw)
@@ -399,9 +438,13 @@ func (s *Server) deleteSession(c *gin.Context) {
 	l := s.lock(x.ID)
 	l.Lock()
 	defer l.Unlock()
-	var sb store.Sandbox
-	if s.S.DB.First(&sb, "session_id = ?", x.ID).Error == nil && sb.State != "killed" {
-		if _, e := s.e2b(c.Request.Context(), "kill", &sb, nil); e != nil {
+	sb, err := s.getSandbox(c.Request.Context(), x.ID)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		s.fail(c, 500, err)
+		return
+	}
+	if err == nil && sb.State != "killed" {
+		if e := s.R.KillSandbox(c.Request.Context(), s.C.E2BKey, sb.E2bSandboxID); e != nil {
 			s.fail(c, 502, e)
 			return
 		}
@@ -410,16 +453,10 @@ func (s *Server) deleteSession(c *gin.Context) {
 		s.fail(c, 500, e)
 		return
 	}
-	if e := s.S.DB.Delete(&x).Error; e != nil {
+	if e := s.S.DeleteSession(c.Request.Context(), x.ID); e != nil {
 		s.fail(c, 500, e)
 		return
 	}
 	s.sandboxErrors.Delete(x.ID)
 	c.Status(204)
-}
-
-func (s *Server) frames(id string) []store.StreamFrame {
-	f := []store.StreamFrame{}
-	s.S.DB.Where("session_id = ?", id).Order("id").Find(&f)
-	return f
 }

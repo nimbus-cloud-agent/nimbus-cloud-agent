@@ -12,7 +12,5 @@ if ! "$pg_bin/pg_isready" -h 127.0.0.1 -p 55432 >/dev/null; then "$pg_bin/pg_ctl
 db_exists=$("$pg_bin/psql" -h 127.0.0.1 -p 55432 -U nimbus -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='nimbus'")
 if [ "$db_exists" != "1" ]; then "$pg_bin/createdb" -h 127.0.0.1 -p 55432 -U nimbus nimbus; fi
 npm ci
-npm ci --prefix web
-npm run build --prefix web
-go build -o bin/nimbus-cloud-agent ./cmd/nimbus
+make build
 echo 'Ready. Add deepseekkey and e2bhobbykey (or NIMBUS_* env vars), then run: npm start'

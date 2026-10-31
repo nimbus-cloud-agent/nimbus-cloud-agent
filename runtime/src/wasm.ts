@@ -2,10 +2,28 @@ import {
   newQuickJSWASMModule,
   newVariant,
   RELEASE_SYNC,
+  type QuickJSHandle,
+  type QuickJSDeferredPromise,
+  type JSPromiseState,
 } from "quickjs-emscripten";
 import { stripTypeScriptTypes } from "node:module";
-import { PtcRuntime } from "@deepseek-ai/dsh-ptc-runtime";
+import {
+  PtcRuntime,
+  type PtcRunRequest,
+  type PtcRunSpec,
+  type PtcRunResult,
+} from "@deepseek-ai/dsh-ptc-runtime";
 
+import { errorMessage } from "./errors.js";
+export interface HumanWaitClock {
+  elapsed(): number;
+  pause(): () => void;
+}
+declare module "@deepseek-ai/cordis" {
+  interface Context {
+    nimbusHumanWait: HumanWaitClock;
+  }
+}
 // Host-only clock: a human review may outlive a PTC execution budget. Never
 // expose it to generated code, and only extend deadlines between VM jobs.
 export function createHumanWaitClock() {
@@ -35,18 +53,21 @@ export class WasmRuntime extends PtcRuntime {
   get executionInstructions() {
     return "TypeScript runs in isolated QuickJS WebAssembly. Use only generated SDK bindings. No Node, imports, filesystem, environment, fetch, or subprocesses. Use console.log and return JSON.";
   }
-  resolve(request) {
+  resolve(request: PtcRunRequest): PtcRunSpec {
     const ms = request.timeoutMs === undefined ? 120_000 : request.timeoutMs;
-    if (!Number.isFinite(ms) || ms <= 0 || ms > 600_000)
+    if (ms === null || !Number.isFinite(ms) || ms <= 0 || ms > 600_000)
       throw Error("PTC timeout must be 1–600000 ms");
     return { ...request, cwd: "/workspace", timeoutMs: ms };
   }
-  async run(spec) {
+  async run(spec: PtcRunSpec): Promise<PtcRunResult> {
     return runWasm(spec, this.ctx.get("nimbusHumanWait"));
   }
 }
 
-export async function runWasm(spec, humanWait) {
+export async function runWasm(
+  spec: PtcRunRequest,
+  humanWait?: HumanWaitClock,
+): Promise<PtcRunResult> {
   const memory = new WebAssembly.Memory({ initial: 256, maximum: 4096 });
   const module = await newQuickJSWASMModule(
     newVariant(RELEASE_SYNC, { wasmMemory: memory }),
@@ -62,14 +83,14 @@ export async function runWasm(spec, humanWait) {
     () => Date.now() > deadline || !!spec.signal?.aborted,
   );
   const vm = runtime.newContext();
-  const logs = [],
-    pending = new Set(),
-    deferred = new Set();
+  const logs: string[] = [],
+    pending = new Set<Promise<void>>(),
+    deferred = new Set<QuickJSDeferredPromise>();
   let disposed = false,
     outputSize = 0,
-    handle,
-    settled;
-  const jsonHandle = (value) =>
+    handle: QuickJSHandle | undefined,
+    settled: JSPromiseState | undefined;
+  const jsonHandle = (value: unknown) =>
     vm.unwrapResult(vm.evalCode(`(${JSON.stringify(value ?? null)})`));
   const print = vm.newFunction("log", (...args) => {
     const text = args
@@ -118,10 +139,10 @@ export async function runWasm(spec, humanWait) {
                 const h = ns.errorClass
                   ? vm.unwrapResult(
                       vm.evalCode(
-                        `new globalThis[${JSON.stringify(ns.errorClass.name)}](${JSON.stringify(String(error.message))},${JSON.stringify(name)})`,
+                        `new globalThis[${JSON.stringify(ns.errorClass.name)}](${JSON.stringify(errorMessage(error))},${JSON.stringify(name)})`,
                       ),
                     )
-                  : vm.newError(String(error.message));
+                  : vm.newError(errorMessage(error));
                 promise.reject(h);
                 h.dispose();
               }
@@ -129,7 +150,7 @@ export async function runWasm(spec, humanWait) {
           )
           .catch((error) => {
             if (!disposed) {
-              const h = vm.newError(String(error.message));
+              const h = vm.newError(errorMessage(error));
               promise.reject(h);
               h.dispose();
             }
@@ -198,15 +219,17 @@ export async function runWasm(spec, humanWait) {
           : Date.now() > deadline
             ? "timeout"
             : "exception",
-        message: String(error.message),
+        message: errorMessage(error),
       },
     };
   } finally {
     disposed = true;
     for (const promise of deferred) promise.dispose();
     if (handle?.alive) handle.dispose();
-    if (settled?.error?.alive) settled.error.dispose();
-    if (settled?.value?.alive) settled.value.dispose();
+    if (settled?.error && "alive" in settled.error && settled.error.alive)
+      settled.error.dispose();
+    if (settled?.type === "fulfilled" && settled.value.alive)
+      settled.value.dispose();
     vm.dispose();
     runtime.dispose();
     // The Harness owns cancellation/draining of in-flight SDK calls. Their callbacks

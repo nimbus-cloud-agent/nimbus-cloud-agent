@@ -11,7 +11,13 @@ import {
   Check,
   Upload,
 } from "lucide-react";
-import { api } from "./api";
+import {
+  api,
+  type SettingsData,
+  type MCPServer,
+  type MCPDraft,
+  type MCPResult,
+} from "./api";
 import { Toggle } from "./components";
 type Skill = {
   id?: string;
@@ -44,19 +50,19 @@ export default function Settings({
     [configured, setConfigured] = useState(false),
     [template, setTemplate] = useState("base"),
     [skills, setSkills] = useState<Skill[]>([]),
-    [mcps, setMcps] = useState<any[]>([]),
+    [mcps, setMcps] = useState<MCPServer[]>([]),
     [edit, setEdit] = useState<Skill | null>(null),
     [file, setFile] = useState(0),
-    [mcpEdit, setMcpEdit] = useState<any>(null),
+    [mcpEdit, setMcpEdit] = useState<MCPDraft | null>(null),
     [busy, setBusy] = useState(false),
     [notice, setNotice] = useState(""),
     [failure, setFailure] = useState("");
   async function load() {
     try {
       const [s, k, m] = await Promise.all([
-        api("/settings"),
-        api("/skills"),
-        api("/mcp/servers"),
+        api<SettingsData>("/settings"),
+        api<Skill[]>("/skills"),
+        api<MCPServer[]>("/mcp/servers"),
       ]);
       setTemplate(s.e2b_template);
       setConfigured(!!s.deepseek_api_key);
@@ -73,7 +79,10 @@ export default function Settings({
       setNotice("");
     }
   }, [open]);
-  async function run(fn: () => Promise<any>, message = "已保存，下轮对话生效") {
+  async function run(
+    fn: () => Promise<unknown>,
+    message = "已保存，下轮对话生效",
+  ) {
     setBusy(true);
     setFailure("");
     setNotice("");
@@ -476,7 +485,7 @@ export default function Settings({
                                 ok: "已授权",
                                 pending: "等待授权",
                                 expired: "需要重新授权",
-                              }[m.oauth_state as string]
+                              }[m.oauth_state]
                             }
                           </Chip>
                         </strong>
@@ -500,7 +509,7 @@ export default function Settings({
                           variant="ghost"
                           onPress={() =>
                             run(async () => {
-                              const r = await api(
+                              const r = await api<MCPResult>(
                                 `/mcp/servers/${m.id}/test`,
                                 "POST",
                               );
@@ -515,7 +524,7 @@ export default function Settings({
                           variant="ghost"
                           onPress={() =>
                             run(async () => {
-                              const r = await api(
+                              const r = await api<MCPResult>(
                                 `/mcp/servers/${m.id}/oauth/start`,
                                 "POST",
                               );

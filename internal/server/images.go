@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -13,16 +12,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/executor"
+	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/model"
 	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/store"
-	"gorm.io/gorm"
 )
-
-type messageImage struct {
-	ID         string          `json:"id"`
-	Name       string          `json:"name"`
-	URL        string          `json:"url"`
-	Attachment json.RawMessage `json:"attachment"`
-}
 
 func (s *Server) imageRoutes(r *gin.Engine) {
 	r.POST("/api/sessions/:id/images", func(c *gin.Context) {
@@ -64,21 +57,17 @@ func (s *Server) imageRoutes(r *gin.Engine) {
 		defer os.RemoveAll(dir)
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
 		defer cancel()
-		raw, err := s.R.Call(ctx, "images", gin.H{"harness_path": s.C.HarnessPath, "work_dir": dir, "name": name, "media_type": media, "data": in.Data})
+		result, err := s.R.Images(ctx, executor.ImageRequest{WorkDir: dir, Name: name, MediaType: media, Data: in.Data})
 		if err != nil {
 			s.fail(c, 400, fmt.Errorf("图片无法读取：%s", err))
 			return
 		}
-		var result struct {
-			Ref  json.RawMessage `json:"ref"`
-			Data []byte          `json:"data"`
-		}
-		if err := json.Unmarshal(raw, &result); err != nil || len(result.Data) == 0 {
+		if len(result.Data) == 0 {
 			s.fail(c, 500, fmt.Errorf("图片处理失败"))
 			return
 		}
-		img := store.Image{ID: uuid.NewString(), SessionID: sess.ID, Ref: result.Ref, Data: result.Data}
-		if err := s.S.DB.Create(&img).Error; err != nil {
+		img := model.Image{ID: uuid.NewString(), SessionID: sess.ID, Ref: result.Ref, Data: result.Data}
+		if err := s.S.CreateImage(c.Request.Context(), store.Image(img)); err != nil {
 			s.fail(c, 500, err)
 			return
 		}
@@ -93,35 +82,23 @@ func (s *Server) imageRoutes(r *gin.Engine) {
 			c.Status(404)
 			return
 		}
-		var img store.Image
-		if s.S.DB.First(&img, "id=? AND session_id=?", c.Param("image"), sess.ID).Error != nil {
+		row, err := s.S.Image(c.Request.Context(), sess.ID, c.Param("image"))
+		if err != nil {
 			c.Status(404)
 			return
 		}
-		var ref struct {
-			MediaType string `json:"mediaType"`
-		}
-		if err := json.Unmarshal(img.Ref, &ref); err != nil {
-			s.fail(c, 500, err)
-			return
-		}
-		c.Data(200, ref.MediaType, img.Data)
+		c.Data(200, row.Ref.MediaType, row.Data)
 	})
 }
 
-func imageView(img store.Image) messageImage {
-	var ref struct {
-		Name string `json:"name"`
-	}
-	_ = json.Unmarshal(img.Ref, &ref)
-	return messageImage{ID: img.ID, Name: ref.Name, URL: "/api/sessions/" + img.SessionID + "/images/" + img.ID, Attachment: img.Ref}
+func imageView(img model.Image) model.MessageImage {
+	return model.MessageImage{ID: img.ID, Name: img.Ref.Name, URL: "/api/sessions/" + img.SessionID + "/images/" + img.ID, Attachment: img.Ref}
 }
-
-func messageImages(tx *gorm.DB, sid string, ids []string) (json.RawMessage, error) {
+func messageImages(ctx context.Context, tx *store.Store, sid string, ids []string) ([]model.MessageImage, error) {
 	if len(ids) > 4 {
 		return nil, fmt.Errorf("每条消息最多 4 张图片")
 	}
-	images := make([]messageImage, 0, len(ids))
+	images := make([]model.MessageImage, 0, len(ids))
 	seen := map[string]bool{}
 	var total int64
 	for _, id := range ids {
@@ -129,19 +106,16 @@ func messageImages(tx *gorm.DB, sid string, ids []string) (json.RawMessage, erro
 			return nil, fmt.Errorf("图片 ID 无效或重复")
 		}
 		seen[id] = true
-		var img store.Image
-		if tx.Select("id", "session_id", "ref").First(&img, "id=? AND session_id=?", id, sid).Error != nil {
-			return nil, fmt.Errorf("图片不属于当前会话，请重新上传")
+		row, err := tx.ImageMetadata(ctx, sid, id)
+		if err != nil {
+			return nil, fmt.Errorf("图片不属于当前会话，请重新上传: %w", err)
 		}
-		var ref struct {
-			Bytes int64 `json:"bytes"`
-		}
-		_ = json.Unmarshal(img.Ref, &ref)
-		total += ref.Bytes
+		img := model.Image(row)
+		total += img.Ref.Bytes
 		images = append(images, imageView(img))
 	}
 	if total > 10<<20 {
 		return nil, fmt.Errorf("每条消息图片总大小不能超过 10 MB")
 	}
-	return store.Raw(images), nil
+	return images, nil
 }

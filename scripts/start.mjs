@@ -38,8 +38,11 @@ const env = {
   NIMBUS_POSTGRES:
     process.env.NIMBUS_POSTGRES ||
     "postgres://nimbus@127.0.0.1:55432/nimbus?sslmode=disable",
-  NIMBUS_HARNESS_PATH:
-    process.env.NIMBUS_HARNESS_PATH || "node_modules/.bin/dsh",
+  NIMBUS_RUNTIME_COMMAND:
+    process.env.NIMBUS_RUNTIME_COMMAND ||
+    fileURLToPath(
+      new URL("../node_modules/.bin/nimbus-agent-runtime", import.meta.url),
+    ),
 };
 for (const [key, file] of [
   ["NIMBUS_DEEPSEEK_API_KEY", "deepseekkey"],

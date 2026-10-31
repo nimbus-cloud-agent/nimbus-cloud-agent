@@ -17,8 +17,8 @@ jobs:
           node-version: '24'
           cache: npm
       - run: npm ci
-      - run: make web
       - run: make test
+      - run: make pack-runtime
       - name: Build macOS and Linux executables
         run: |
           mkdir -p release
@@ -27,7 +27,6 @@ jobs:
             arch="${target#*-}"
             CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build -trimpath -o "release/nimbus-$target" ./cmd/nimbus
           done
-          cp package.json package-lock.json release/
           cd release
           sha256sum nimbus-* > SHA256SUMS
       - uses: softprops/action-gh-release@v2

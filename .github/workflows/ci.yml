@@ -1,0 +1,40 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: nimbus
+          POSTGRES_PASSWORD: nimbus
+          POSTGRES_DB: nimbus
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U nimbus"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      NIMBUS_TEST_DATABASE_URL: postgres://nimbus:nimbus@127.0.0.1:5432/nimbus?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: make test
+      - run: go vet ./...
+      - run: npm run protocol:check
+      - run: make pack-runtime
+      - name: Verify generated outputs are not tracked
+        run: |
+          test -z "$(git ls-files internal/runtimeprotocol/generated runtime/src/generated runtime/dist runtime/test-dist release)"

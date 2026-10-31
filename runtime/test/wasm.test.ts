@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { runWasm, createHumanWaitClock } from "./wasm.mjs";
+import { runWasm, createHumanWaitClock } from "../src/wasm.js";
 test("TypeScript executes inside Wasm and only explicit bindings can cause effects", async () => {
   let calls = 0;
   const r = await runWasm({
@@ -11,9 +11,9 @@ test("TypeScript executes inside Wasm and only explicit bindings can cause effec
       {
         global: "tools",
         functions: {
-          double: async ({ n }) => {
+          double: async (args) => {
             calls++;
-            return n * 2;
+            return (args as { n: number }).n * 2;
           },
         },
       },
@@ -29,7 +29,7 @@ test("infinite loops are interrupted", async () => {
     timeoutMs: 30,
     bindings: [],
   });
-  assert.equal(r.error.kind, "timeout");
+  assert.equal(r.error?.kind, "timeout");
 });
 test("Node import cannot escape WebAssembly", async () => {
   const r = await runWasm({
@@ -62,7 +62,7 @@ test("pending promises cannot bypass the deadline", async () => {
     timeoutMs: 30,
     bindings: [],
   });
-  assert.equal(r.error.kind, "timeout");
+  assert.equal(r.error?.kind, "timeout");
 });
 test("memory allocation beyond the instance cap fails", async () => {
   const r = await runWasm({
@@ -123,7 +123,7 @@ test("human review excludes idle waiting without removing the execution deadline
     },
     clock,
   );
-  assert.equal(loop.error.kind, "timeout");
+  assert.equal(loop.error?.kind, "timeout");
 });
 
 test("human review cannot shield concurrent CPU loops or cancellation", async () => {
@@ -131,10 +131,10 @@ test("human review cannot shield concurrent CPU loops or cancellation", async ()
   const resume = clock.pause();
   try {
     const loop = await runWasm(
-      { program: "while(true){}", timeoutMs: 50 },
+      { program: "while(true){}", timeoutMs: 50, bindings: [] },
       clock,
     );
-    assert.equal(loop.error.kind, "timeout");
+    assert.equal(loop.error?.kind, "timeout");
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 80);
     try {
@@ -143,10 +143,11 @@ test("human review cannot shield concurrent CPU loops or cancellation", async ()
           program: "await new Promise(()=>{});",
           timeoutMs: 50,
           signal: controller.signal,
+          bindings: [],
         },
         clock,
       );
-      assert.equal(aborted.error.kind, "abort");
+      assert.equal(aborted.error?.kind, "abort");
     } finally {
       clearTimeout(timer);
     }

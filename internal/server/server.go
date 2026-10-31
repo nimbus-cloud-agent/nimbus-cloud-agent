@@ -2,14 +2,8 @@ package server
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
-	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
-	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/config"
-	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/executor"
-	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/store"
-	"gorm.io/gorm"
 	"io/fs"
 	"net"
 	"net/http"
@@ -17,24 +11,30 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/config"
+	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/executor"
+	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/model"
+	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/store"
 )
 
 type runningTurn struct {
 	cancel context.CancelFunc
 	done   chan struct{}
 }
-type tokenScope struct {
+type toolScope struct {
 	SessionID string
 	TurnID    string
 }
 type Server struct {
 	C             config.Config
 	S             *store.Store
-	R             executor.Runtime
+	R             *executor.Runtime
 	HTTP          *http.Server
 	mu            sync.Mutex
 	running       map[string]*runningTurn
-	tokens        map[string]tokenScope
 	locks         sync.Map
 	deleting      sync.Map
 	provisioning  sync.Map
@@ -46,33 +46,23 @@ type Server struct {
 	BaseURL       string
 }
 
-func New(c config.Config, st *store.Store, frontend fs.FS) (*Server, error) {
+func New(c config.Config, st *store.Store, frontend fs.FS, runtime *executor.Runtime) (*Server, error) {
 	host, _, e := net.SplitHostPort(c.Addr)
 	if e != nil || !(host == "localhost" || net.ParseIP(host) != nil && net.ParseIP(host).IsLoopback()) {
 		return nil, fmt.Errorf("single-user control plane must bind loopback (127.0.0.1:8080)")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	s := &Server{C: c, S: st, R: executor.Runtime{Dir: c.RuntimeDir}, running: map[string]*runningTurn{}, tokens: map[string]tokenScope{}, ctx: ctx, cancel: cancel, BaseURL: "http://" + c.Addr}
-	if e = st.DB.Transaction(func(tx *gorm.DB) error {
-		if e := interruptQuestions(tx); e != nil {
-			return e
-		}
-		if e := tx.Model(&store.Outbox{}).Where("status = 'starting'").Updates(map[string]any{"status": "failed", "error": "后端重启，本轮尚未送达，请重发", "outcome": "interrupted"}).Error; e != nil {
-			return e
-		}
-		if e := tx.Model(&store.Outbox{}).Where("status = 'delivered' AND outcome = ''").Update("outcome", "interrupted").Error; e != nil {
-			return e
-		}
-		return tx.Model(&store.Session{}).Where("agent_state <> 'idle'").Update("agent_state", "idle").Error
-	}); e != nil {
+	s := &Server{C: c, S: st, R: runtime, running: map[string]*runningTurn{}, ctx: ctx, cancel: cancel, BaseURL: "http://" + c.Addr}
+	if e = st.RecoverInterrupted(ctx); e != nil {
+		cancel()
 		return nil, e
 	}
+
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.Use(gin.Recovery(), s.guard)
-	r.GET("/api/health", func(c *gin.Context) { c.JSON(200, gin.H{"ok": true, "harness": "0.2.1-rc.5"}) })
+	r.GET("/api/health", func(c *gin.Context) { c.JSON(200, gin.H{"ok": true, "runtime": s.R.Status()}) })
 	s.routes(r)
-	r.POST("/internal/tools", s.internalTool)
 	r.NoRoute(func(c *gin.Context) {
 		if strings.HasPrefix(c.Request.URL.Path, "/api/") || strings.HasPrefix(c.Request.URL.Path, "/internal/") {
 			c.JSON(404, gin.H{"error": "not found"})
@@ -122,9 +112,6 @@ func (s *Server) guard(c *gin.Context) {
 	if strings.HasPrefix(c.Request.URL.Path, "/api/skills") {
 		limit = 512 << 20
 	}
-	if c.Request.URL.Path == "/internal/tools" {
-		limit = 64 << 20
-	}
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, limit)
 	c.Header("X-Content-Type-Options", "nosniff")
 	c.Header("Cache-Control", "no-store")
@@ -141,33 +128,49 @@ func (s *Server) redact(msg string) string {
 func (s *Server) fail(c *gin.Context, status int, e error) {
 	c.JSON(status, gin.H{"error": s.redact(e.Error())})
 }
-func (s *Server) session(c *gin.Context) (store.Session, bool) {
-	var sess store.Session
+func (s *Server) session(c *gin.Context) (model.Session, bool) {
+	var sess model.Session
 	if _, e := uuid.Parse(c.Param("id")); e != nil {
 		s.fail(c, 400, fmt.Errorf("invalid session ID"))
 		return sess, false
 	}
-	if e := s.S.DB.First(&sess, "id = ?", c.Param("id")).Error; e != nil {
-		s.fail(c, 404, fmt.Errorf("会话不存在"))
+	var e error
+	sess, e = s.getSession(c.Request.Context(), c.Param("id"))
+	if e != nil {
+		if errors.Is(e, store.ErrNotFound) {
+			s.fail(c, 404, fmt.Errorf("会话不存在"))
+		} else {
+			s.fail(c, 500, e)
+		}
 		return sess, false
 	}
 	return sess, true
 }
-func (s *Server) view(sess store.Session) gin.H {
-	var sb store.Sandbox
-	var sandbox any = gin.H{"state": "not_started"}
-	if s.S.DB.First(&sb, "session_id = ?", sess.ID).Error == nil {
+func (s *Server) view(ctx context.Context, sess model.Session) (model.SessionView, error) {
+	sandbox := model.SandboxView{State: "not_started"}
+	sb, err := s.getSandbox(ctx, sess.ID)
+	if err == nil {
 		if sb.Error != "" {
 			sb.State = "error"
 		}
-		sandbox = sb
+		sandbox = sandboxView(sb)
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return model.SessionView{}, err
 	} else if message, ok := s.sandboxErrors.Load(sess.ID); ok {
-		sandbox = gin.H{"state": "error", "error": message}
+		sandbox = model.SandboxView{State: "error", Error: message.(string)}
 	}
 	if state, ok := s.provisioning.Load(sess.ID); ok {
-		sandbox = gin.H{"state": "provisioning", "message": state}
+		sandbox = model.SandboxView{State: "provisioning", Message: state.(string)}
 	}
-	return gin.H{"id": sess.ID, "title": sess.Title, "agent_state": sess.AgentState, "synced_seq": sess.SyncedSeq, "options": sess.Options, "mode_locked": sess.LockedMode != nil, "created_at": sess.CreatedAt, "last_active_at": sess.LastActiveAt, "sandbox": sandbox}
+	return model.SessionView{ID: sess.ID, Title: sess.Title, AgentState: sess.AgentState, SyncedSeq: sess.SyncedSeq, Options: sess.Options, ModeLocked: sess.LockedMode != nil, CreatedAt: sess.CreatedAt, LastActiveAt: sess.LastActiveAt, Sandbox: sandbox}, nil
+}
+func (s *Server) respondSession(c *gin.Context, status int, sess model.Session) {
+	view, err := s.view(c.Request.Context(), sess)
+	if err != nil {
+		s.fail(c, 500, err)
+		return
+	}
+	c.JSON(status, view)
 }
 func (s *Server) lock(id string) *sync.Mutex {
 	x, _ := s.locks.LoadOrStore(id, &sync.Mutex{})
@@ -184,16 +187,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	return s.HTTP.Shutdown(ctx)
 }
 func decode[T any](c *gin.Context) (T, error) { var x T; e := c.ShouldBindJSON(&x); return x, e }
-func validOptions(raw json.RawMessage) error {
-	var x struct {
-		Model    string `json:"model"`
-		Thinking string `json:"thinking"`
-		Mode     string `json:"mode"`
-		Plan     bool   `json:"plan"`
-	}
-	if e := json.Unmarshal(raw, &x); e != nil {
-		return e
-	}
+func validOptions(x model.Options) error {
 	if x.Model != "deepseek-flash" {
 		return fmt.Errorf("model must be deepseek-flash")
 	}

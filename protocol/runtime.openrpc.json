@@ -1,0 +1,1143 @@
+{
+  "openrpc": "1.3.2",
+  "info": {
+    "title": "Nimbus Agent Runtime Protocol",
+    "version": "2.0.0",
+    "description": "Stable control-plane boundary for nimbus-agent-runtime, a DeepSeek Harness wrapper. Native Harness and provider payloads remain opaque JSON."
+  },
+  "methods": [
+    {
+      "name": "runtime.check",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "request",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/CheckRequest"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/RuntimeInfo"
+        }
+      },
+      "x-service": "Runtime",
+      "x-function": "check"
+    },
+    {
+      "name": "runtime.status",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "request",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/Empty"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/RuntimeStatus"
+        }
+      },
+      "x-service": "Runtime",
+      "x-function": "status"
+    },
+    {
+      "name": "turn.start",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "request",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/TurnRequest"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/TurnResult"
+        }
+      },
+      "x-service": "Runtime",
+      "x-function": "turn"
+    },
+    {
+      "name": "runtime.e2b",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "request",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/E2BRequest"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/E2BResult"
+        }
+      },
+      "x-service": "Runtime",
+      "x-function": "e2b"
+    },
+    {
+      "name": "runtime.mcp",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "request",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/MCPRequest"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/MCPResult"
+        }
+      },
+      "x-service": "Runtime",
+      "x-function": "mcp"
+    },
+    {
+      "name": "runtime.images",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "request",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/ImageRequest"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/ImageResult"
+        }
+      },
+      "x-service": "Runtime",
+      "x-function": "images"
+    },
+    {
+      "name": "terminal.open",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "request",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/TerminalRequest"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/SuccessResult"
+        }
+      },
+      "x-service": "Runtime",
+      "x-function": "terminal"
+    },
+    {
+      "name": "terminal.write",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "request",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/TerminalWriteRequest"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/SuccessResult"
+        }
+      },
+      "x-service": "Runtime",
+      "x-function": "terminalWrite"
+    },
+    {
+      "name": "turn.event",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "request",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/EventRequest"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/SuccessResult"
+        }
+      },
+      "x-service": "Control",
+      "x-function": "event"
+    },
+    {
+      "name": "turn.question",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "request",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/QuestionRequest"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/QuestionResult"
+        }
+      },
+      "x-service": "Control",
+      "x-function": "question"
+    },
+    {
+      "name": "tool.call",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "request",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/ToolRequest"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/ExternalResult"
+        }
+      },
+      "x-service": "Control",
+      "x-function": "tool"
+    },
+    {
+      "name": "runtime.output",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "request",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/OutputRequest"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/SuccessResult"
+        }
+      },
+      "x-service": "Control",
+      "x-function": "output"
+    }
+  ],
+  "components": {
+    "schemas": {
+      "CheckRequest": {
+        "type": "object",
+        "properties": {
+          "protocolVersion": {
+            "type": "integer",
+            "const": 2
+          }
+        },
+        "required": [
+          "protocolVersion"
+        ],
+        "additionalProperties": false
+      },
+      "RuntimeInfo": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "const": "nimbus-agent-runtime"
+          },
+          "version": {
+            "type": "string"
+          },
+          "protocolVersion": {
+            "type": "integer",
+            "const": 2
+          }
+        },
+        "required": [
+          "name",
+          "version",
+          "protocolVersion"
+        ],
+        "additionalProperties": false
+      },
+      "Empty": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "SuccessResult": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok"
+        ],
+        "additionalProperties": false
+      },
+      "RuntimeStatus": {
+        "type": "object",
+        "properties": {
+          "pid": {
+            "type": "integer"
+          },
+          "workers": {
+            "type": "integer"
+          },
+          "busy": {
+            "type": "integer"
+          },
+          "queued": {
+            "type": "integer"
+          },
+          "operations": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "pid",
+          "workers",
+          "busy",
+          "queued",
+          "operations"
+        ],
+        "additionalProperties": false
+      },
+      "TurnOptions": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "standard",
+              "ptc"
+            ]
+          },
+          "model": {
+            "type": "string",
+            "const": "deepseek-flash"
+          },
+          "thinking": {
+            "type": "string",
+            "enum": [
+              "off",
+              "low",
+              "high",
+              "max"
+            ]
+          },
+          "plan": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "mode",
+          "model",
+          "thinking",
+          "plan"
+        ],
+        "additionalProperties": false
+      },
+      "Attachment": {
+        "type": "object",
+        "properties": {
+          "ref": {},
+          "data": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ref",
+          "data"
+        ],
+        "additionalProperties": false
+      },
+      "ImageInput": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "attachment": {}
+        },
+        "required": [
+          "attachment"
+        ],
+        "additionalProperties": false
+      },
+      "SkillFile": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "content": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "skill_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "content"
+        ],
+        "additionalProperties": false
+      },
+      "Skill": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SkillFile"
+            }
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "description",
+          "files"
+        ],
+        "additionalProperties": false
+      },
+      "MCPTool": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "inputSchema": {},
+          "server": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "TurnRequest": {
+        "type": "object",
+        "properties": {
+          "operationId": {
+            "type": "string"
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "turn_id": {
+            "type": "string"
+          },
+          "message_id": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "session_mode": {
+            "type": "string",
+            "enum": [
+              "standard",
+              "ptc"
+            ]
+          },
+          "options": {
+            "$ref": "#/components/schemas/TurnOptions"
+          },
+          "header": {},
+          "records": {
+            "type": "array",
+            "items": {}
+          },
+          "work_dir": {
+            "type": "string"
+          },
+          "api_key": {
+            "type": "string"
+          },
+          "skills": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Skill"
+            }
+          },
+          "mcp": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MCPTool"
+            }
+          },
+          "attachments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Attachment"
+            }
+          },
+          "images": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImageInput"
+            }
+          },
+          "recovery": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "operationId",
+          "session_id",
+          "turn_id",
+          "message_id",
+          "message",
+          "session_mode",
+          "options",
+          "records",
+          "work_dir",
+          "api_key",
+          "skills",
+          "mcp",
+          "attachments",
+          "images"
+        ],
+        "additionalProperties": false
+      },
+      "TurnResult": {
+        "type": "object",
+        "properties": {
+          "finished": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "finished"
+        ],
+        "additionalProperties": false
+      },
+      "E2BArgs": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "command": {
+            "type": "string"
+          },
+          "cwd": {
+            "type": "string"
+          },
+          "timeoutMs": {
+            "type": "integer"
+          },
+          "path": {
+            "type": "string"
+          },
+          "content": {
+            "type": "string"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "E2BRequest": {
+        "type": "object",
+        "properties": {
+          "operationId": {
+            "type": "string"
+          },
+          "op": {
+            "type": "string",
+            "enum": [
+              "create",
+              "connect",
+              "kill",
+              "pause",
+              "info",
+              "exec",
+              "read_file",
+              "write_file"
+            ]
+          },
+          "api_key": {
+            "type": "string"
+          },
+          "template": {
+            "type": "string"
+          },
+          "sandbox_id": {
+            "type": "string"
+          },
+          "args": {
+            "$ref": "#/components/schemas/E2BArgs"
+          },
+          "stream": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "operationId",
+          "op",
+          "api_key"
+        ],
+        "additionalProperties": false
+      },
+      "ExternalResult": {
+        "type": "object",
+        "properties": {
+          "value": {}
+        },
+        "required": [
+          "value"
+        ],
+        "additionalProperties": false
+      },
+      "MCPRequest": {
+        "type": "object",
+        "properties": {
+          "op": {
+            "type": "string",
+            "enum": [
+              "authorize",
+              "callback",
+              "list",
+              "call"
+            ]
+          },
+          "url": {
+            "type": "string"
+          },
+          "oauth_data": {
+            "$ref": "#/components/schemas/OAuthData"
+          },
+          "callback_url": {
+            "type": "string"
+          },
+          "args": {
+            "$ref": "#/components/schemas/MCPArguments"
+          }
+        },
+        "required": [
+          "op",
+          "url",
+          "callback_url"
+        ],
+        "additionalProperties": false
+      },
+      "ImageRequest": {
+        "type": "object",
+        "properties": {
+          "work_dir": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "media_type": {
+            "type": "string"
+          },
+          "data": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "work_dir",
+          "name",
+          "media_type",
+          "data"
+        ],
+        "additionalProperties": false
+      },
+      "ImageResult": {
+        "type": "object",
+        "properties": {
+          "ref": {},
+          "data": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ref",
+          "data"
+        ],
+        "additionalProperties": false
+      },
+      "TerminalRequest": {
+        "type": "object",
+        "properties": {
+          "operationId": {
+            "type": "string"
+          },
+          "terminal_id": {
+            "type": "string"
+          },
+          "api_key": {
+            "type": "string"
+          },
+          "sandbox_id": {
+            "type": "string"
+          },
+          "rows": {
+            "type": "integer"
+          },
+          "cols": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "operationId",
+          "terminal_id",
+          "api_key",
+          "sandbox_id"
+        ],
+        "additionalProperties": false
+      },
+      "TerminalMessage": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "input",
+              "resize"
+            ]
+          },
+          "data": {
+            "type": "string"
+          },
+          "cols": {
+            "type": "integer"
+          },
+          "rows": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "additionalProperties": false
+      },
+      "TerminalWriteRequest": {
+        "type": "object",
+        "properties": {
+          "terminal_id": {
+            "type": "string"
+          },
+          "message": {
+            "$ref": "#/components/schemas/TerminalMessage"
+          }
+        },
+        "required": [
+          "terminal_id",
+          "message"
+        ],
+        "additionalProperties": false
+      },
+      "EventRequest": {
+        "type": "object",
+        "properties": {
+          "operationId": {
+            "type": "string"
+          },
+          "event": {
+            "type": "string",
+            "enum": [
+              "header",
+              "ready",
+              "record",
+              "frame",
+              "flushing",
+              "done"
+            ]
+          },
+          "data": {}
+        },
+        "required": [
+          "operationId",
+          "event",
+          "data"
+        ],
+        "additionalProperties": false
+      },
+      "QuestionRequest": {
+        "type": "object",
+        "properties": {
+          "operationId": {
+            "type": "string"
+          },
+          "data": {}
+        },
+        "required": [
+          "operationId",
+          "data"
+        ],
+        "additionalProperties": false
+      },
+      "QuestionResult": {
+        "type": "object",
+        "properties": {
+          "answer": {
+            "$ref": "#/components/schemas/ReviewAnswer"
+          }
+        },
+        "required": [
+          "answer"
+        ],
+        "additionalProperties": false
+      },
+      "ToolCall": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "args": {},
+          "call_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "args",
+          "call_id"
+        ],
+        "additionalProperties": false
+      },
+      "ToolRequest": {
+        "type": "object",
+        "properties": {
+          "operationId": {
+            "type": "string"
+          },
+          "call": {
+            "$ref": "#/components/schemas/ToolCall"
+          }
+        },
+        "required": [
+          "operationId",
+          "call"
+        ],
+        "additionalProperties": false
+      },
+      "OutputRequest": {
+        "type": "object",
+        "properties": {
+          "operationId": {
+            "type": "string"
+          },
+          "data": {}
+        },
+        "required": [
+          "operationId",
+          "data"
+        ],
+        "additionalProperties": false
+      },
+      "SandboxInfo": {
+        "type": "object",
+        "properties": {
+          "sandboxId": {
+            "type": "string"
+          },
+          "templateId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "region": {
+            "type": "string"
+          },
+          "startedAt": {
+            "type": "string"
+          },
+          "endAt": {
+            "type": "string"
+          },
+          "envdVersion": {
+            "type": "string"
+          },
+          "cpuCount": {
+            "type": "integer"
+          },
+          "memoryMB": {
+            "type": "integer"
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "sandboxId",
+          "templateId",
+          "name",
+          "state",
+          "region",
+          "startedAt",
+          "endAt",
+          "envdVersion",
+          "cpuCount",
+          "memoryMB",
+          "metadata"
+        ],
+        "additionalProperties": false
+      },
+      "CommandResult": {
+        "type": "object",
+        "properties": {
+          "stdout": {
+            "type": "string"
+          },
+          "stderr": {
+            "type": "string"
+          },
+          "exitCode": {
+            "type": "integer"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "stdout",
+          "stderr",
+          "exitCode",
+          "truncated"
+        ],
+        "additionalProperties": false
+      },
+      "FileReadResult": {
+        "type": "object",
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "content",
+          "truncated"
+        ],
+        "additionalProperties": false
+      },
+      "FileWriteResult": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "written": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "path",
+          "written"
+        ],
+        "additionalProperties": false
+      },
+      "E2BResult": {
+        "type": "object",
+        "properties": {
+          "info": {
+            "$ref": "#/components/schemas/SandboxInfo"
+          },
+          "command": {
+            "$ref": "#/components/schemas/CommandResult"
+          },
+          "readFile": {
+            "$ref": "#/components/schemas/FileReadResult"
+          },
+          "writeFile": {
+            "$ref": "#/components/schemas/FileWriteResult"
+          },
+          "ok": {
+            "type": "boolean"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "OAuthData": {
+        "type": "object",
+        "properties": {
+          "state": {
+            "type": "string"
+          },
+          "expires_at": {
+            "type": "integer"
+          },
+          "verifier": {
+            "type": "string"
+          },
+          "client": {},
+          "tokens": {}
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "MCPArguments": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "arguments": {},
+          "code": {
+            "type": "string"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "MCPResult": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "auth_url": {
+            "type": "string"
+          },
+          "oauth_state": {
+            "type": "string"
+          },
+          "oauth_data": {
+            "$ref": "#/components/schemas/OAuthData"
+          },
+          "tools": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MCPTool"
+            }
+          },
+          "result": {},
+          "error": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ok",
+          "oauth_state",
+          "oauth_data"
+        ],
+        "additionalProperties": false
+      },
+      "ReviewAnswer": {
+        "type": "object",
+        "properties": {
+          "dismissed": {
+            "type": "boolean"
+          },
+          "answers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReviewAnswerItem"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "ReviewAnswerItem": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "selected": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "custom": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "selected"
+        ],
+        "additionalProperties": false
+      }
+    }
+  }
+}

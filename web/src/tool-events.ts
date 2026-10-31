@@ -1,61 +1,28 @@
-import type { Event } from "./api";
-
+import type { Event, StreamFrame, ToolArguments, ToolResultView } from "./api";
+export { contentText } from "./event-codec.ts";
 export type ToolNode = {
   id: string;
   name: string;
-  args: Record<string, any>;
+  args: ToolArguments;
   seq: number;
   time?: number;
   ended?: number;
   parent?: string;
-  result?: any;
+  result?: ToolResultView;
   output: string;
   children: ToolNode[];
 };
-export function contentText(content: any): string {
-  return typeof content === "string"
-    ? content
-    : Array.isArray(content)
-      ? content
-          .filter((b) => b.type === "text")
-          .map((b) => b.text)
-          .join("\n")
-      : "";
-}
-export function parseValue(value: any): any {
-  if (typeof value !== "string") return value;
-  try {
-    return JSON.parse(value);
-  } catch {
-    return value;
-  }
-}
-export function resultText(result: any): string {
-  if (result == null) return "";
-  const content =
-    result.message?.content ?? result.content ?? result.result?.content;
-  if (content != null) return contentText(content);
-  return (
-    result.error?.message ??
-    (typeof result.error === "string" ? result.error : "")
-  );
-}
 export function toolFailed(node: ToolNode): boolean {
-  const result = node.result;
-  const value = parseValue(resultText(result));
-  return !!(
-    result?.isError ||
-    result?.message?.isError ||
-    result?.error ||
-    value?.isError ||
-    (typeof value?.exitCode === "number" && value.exitCode !== 0)
-  );
+  return node.result?.failed ?? false;
 }
 
 // Native call IDs join results and stream frames. PTC dispatch start/end records
 // describe one child call, not two separate rows. Attach after collecting all
 // records so replay and late-arriving parents produce the same tree.
-export function buildToolTree(events: Event[], frames: any[]): ToolNode[] {
+export function buildToolTree(
+  events: Event[],
+  frames: StreamFrame[],
+): ToolNode[] {
   const nodes = new Map<string, ToolNode>();
   const ensure = (id: string, e: Event): ToolNode => {
     let node = nodes.get(id);
@@ -63,7 +30,7 @@ export function buildToolTree(events: Event[], frames: any[]): ToolNode[] {
       node = {
         id,
         name: "tool",
-        args: {},
+        args: { formatted: "{}" },
         seq: e.seq,
         time: e.payload.time,
         children: [],
@@ -88,10 +55,10 @@ export function buildToolTree(events: Event[], frames: any[]): ToolNode[] {
       if (!id) continue;
       const n = ensure(id, e);
       n.name = d.name ?? d.toolName ?? n.name;
-      n.args = parseValue(d.arguments) ?? {};
+      n.args = e.tool?.args ?? { formatted: "{}" };
       n.parent = d.parentCallId ?? d.rootCallId;
       if (e.type === "tool/ptc-dispatch") {
-        n.result = d;
+        n.result = e.tool?.result;
         n.ended = e.payload.time;
       }
     } else if (e.type === "tool/result") {
@@ -99,13 +66,13 @@ export function buildToolTree(events: Event[], frames: any[]): ToolNode[] {
         d.callId ?? d.message?.toolCallId ?? d.message?.source?.callId ?? d.id;
       if (!id) continue;
       const n = ensure(id, e);
-      n.result = d;
+      n.result = e.tool?.result;
       n.ended = e.payload.time;
     }
   }
   for (const f of frames) {
     if (f.payload.type === "tool-output") {
-      const n = nodes.get(f.payload.callId);
+      const n = nodes.get(f.payload.callId ?? "");
       if (n) n.output += f.payload.text ?? "";
     }
   }

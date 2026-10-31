@@ -6,6 +6,8 @@ require (
 	github.com/gin-gonic/gin v1.11.0
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
+	github.com/sourcegraph/jsonrpc2 v0.2.3
 	github.com/spf13/cobra v1.10.1
 	github.com/spf13/viper v1.21.0
 	gorm.io/driver/postgres v1.6.0

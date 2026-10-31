@@ -89,7 +89,7 @@ const control = await fetch(root + "/internal/tools", {
   headers: { "Content-Type": "application/json" },
   body: "{}",
 });
-assert.equal(control.status, 403);
+assert.equal(control.status, 404);
 console.log("PASS cross-origin and unauthenticated control requests rejected");
 const pg = "/opt/homebrew/opt/postgresql@17/bin/psql";
 const args = [

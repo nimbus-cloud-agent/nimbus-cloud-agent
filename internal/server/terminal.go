@@ -1,15 +1,17 @@
 package server
 
 import (
-	"bufio"
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"github.com/gin-gonic/gin"
-	"github.com/gorilla/websocket"
-	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/store"
 	"sync"
 	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	"github.com/gorilla/websocket"
+	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/executor"
+	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/model"
 )
 
 func (s *Server) terminal(c *gin.Context) {
@@ -17,8 +19,8 @@ func (s *Server) terminal(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var sb store.Sandbox
-	if s.S.DB.First(&sb, "session_id = ? AND state = 'running'", sess.ID).Error != nil {
+	sb, err := s.getSandbox(c.Request.Context(), sess.ID)
+	if err != nil || sb.State != "running" {
 		c.JSON(409, gin.H{"error": "请先启动沙箱"})
 		return
 	}
@@ -31,71 +33,51 @@ func (s *Server) terminal(c *gin.Context) {
 	ws.SetReadLimit(65536)
 	ctx, cancel := context.WithCancel(s.ctx)
 	defer cancel()
-	cmd := s.R.Command(ctx, "terminal")
-	in, e := cmd.StdinPipe()
-	if e != nil {
-		return
-	}
-	out, e := cmd.StdoutPipe()
-	if e != nil {
-		return
-	}
-	if e = cmd.Start(); e != nil {
-		return
-	}
-	defer cmd.Wait()
-	defer cmd.Process.Kill()
-	defer in.Close()
-	enc := json.NewEncoder(in)
-	enc.Encode(map[string]any{"api_key": s.C.E2BKey, "sandbox_id": sb.E2bSandboxID})
-	var writeMu sync.Mutex
-	done := make(chan struct{})
+	id := uuid.NewString()
+	ready, done := make(chan struct{}), make(chan struct{})
+	var once sync.Once
 	go func() {
 		defer close(done)
 		defer cancel()
-		scan := bufio.NewScanner(out)
-		scan.Buffer(make([]byte, 4096), 2<<20)
-		for scan.Scan() {
-			writeMu.Lock()
+		defer ws.Close()
+		err := s.R.Terminal(ctx, executor.TerminalInput{TerminalID: id, APIKey: s.C.E2BKey, SandboxID: sb.E2bSandboxID}, func(data model.TerminalOutput) error {
+			once.Do(func() { close(ready) })
 			_ = ws.SetWriteDeadline(time.Now().Add(10 * time.Second))
-			e := ws.WriteMessage(websocket.TextMessage, scan.Bytes())
-			writeMu.Unlock()
-			if e != nil {
-				return
-			}
+			return ws.WriteJSON(data)
+		})
+		if err != nil && ctx.Err() == nil {
+			_ = ws.SetWriteDeadline(time.Now().Add(10 * time.Second))
+			_ = ws.WriteJSON(gin.H{"error": s.redact(err.Error())})
 		}
-		ws.Close()
 	}()
 	for {
-		_, b, e := ws.ReadMessage()
-		if e != nil {
+		_, b, err := ws.ReadMessage()
+		if err != nil {
 			break
 		}
-		var m struct {
-			Type string `json:"type"`
-			Data string `json:"data"`
-			Cols int    `json:"cols"`
-			Rows int    `json:"rows"`
-		}
+		var m model.TerminalMessage
 		if json.Unmarshal(b, &m) != nil {
 			continue
 		}
 		if m.Type == "input" {
-			if _, e = base64.StdEncoding.DecodeString(m.Data); e != nil {
+			if _, err = base64.StdEncoding.DecodeString(m.Data); err != nil {
 				continue
 			}
-			s.S.DB.Model(&sb).Update("last_active_at", time.Now())
+			s.touchSandbox(ctx, sb.ID)
+		} else if m.Type != "resize" {
+			continue
 		}
-		if e = enc.Encode(m); e != nil {
+		select {
+		case <-ready:
+		case <-ctx.Done():
+			return
+		}
+		if err = s.R.TerminalWrite(ctx, id, m); err != nil {
 			break
 		}
 	}
-	in.Close()
-	// Let the supervisor kill its remote PTY before terminating the process.
-	select {
-	case <-done:
-	case <-time.After(3 * time.Second):
-		cancel()
-		<-done
-	}
+	cancel()
+	<-done
 }
+
+func ptr[T any](value T) *T { return &value }

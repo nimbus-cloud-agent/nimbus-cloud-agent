@@ -1,3 +1,4 @@
+import { decodeJSON, type TerminalMessage } from "./api";
 import { useEffect, useRef, useState } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
@@ -96,7 +97,7 @@ export default function TerminalPanel({
     const observer = new ResizeObserver(resize);
     observer.observe(el.current);
     ws.onmessage = (e) => {
-      const msg = JSON.parse(e.data);
+      const msg = decodeJSON<TerminalMessage>(e.data);
       if (msg.data)
         term.write(
           Uint8Array.from(atob(msg.data), (c: string) => c.charCodeAt(0)),

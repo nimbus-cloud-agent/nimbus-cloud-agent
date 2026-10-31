@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
-import { spawn } from "node:child_process";
+import { TestRuntime } from "./helpers.js";
 
 test(
   "MCP preserves large paginated tool lists and large call results over stdout pipes",
@@ -10,7 +10,7 @@ test(
     // Larger than the macOS pipe buffer; do not depend on a live OAuth account.
     const description = "Large MCP schema 描述 ".repeat(6000);
     const content = "Large tool response 正文 ".repeat(60000);
-    const cursors = [];
+    const cursors: string[] = [];
     const server = http.createServer(async (req, res) => {
       if (req.method !== "POST") {
         res.writeHead(405);
@@ -51,53 +51,39 @@ test(
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ jsonrpc: "2.0", id: message.id, result }));
     });
-    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-    async function invoke(op) {
-      const child = spawn(
-        process.execPath,
-        [new URL("./mcp.mjs", import.meta.url).pathname],
-        { stdio: ["pipe", "pipe", "pipe"] },
-      );
-      const chunks = [];
-      let stderr = "";
-      child.stdout.on("data", (chunk) => chunks.push(chunk));
-      child.stderr.on("data", (chunk) => {
-        stderr += chunk;
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
+    const runtime = new TestRuntime();
+    async function invoke(op: "list" | "call") {
+      return runtime.client.mcp({
+        op,
+        url: `http://127.0.0.1:${(server.address() as import("node:net").AddressInfo).port}/mcp`,
+        oauth_data: {},
+        callback_url: "http://127.0.0.1/oauth/callback",
+        args: { name: "first-tool", arguments: {} },
       });
-      const finished = new Promise((resolve, reject) => {
-        child.on("error", reject);
-        child.on("close", resolve);
-      });
-      child.stdin.end(
-        JSON.stringify({
-          op,
-          url: `http://127.0.0.1:${server.address().port}/mcp`,
-          oauth_data: {},
-          callback_url: "http://127.0.0.1/oauth/callback",
-          args: { name: "first-tool", arguments: {} },
-        }) + "\n",
-      );
-      try {
-        assert.equal(await finished, 0, stderr);
-        return JSON.parse(Buffer.concat(chunks)).result;
-      } finally {
-        child.kill();
-      }
     }
     try {
       const listed = await invoke("list");
       assert.equal(listed.ok, true);
       assert.deepEqual(cursors, ["first", "page-2"]);
       assert.deepEqual(
-        listed.tools.map((t) => t.name),
+        listed.tools!.map((t) => t.name),
         ["first-tool", "last-tool"],
       );
-      assert.ok(listed.tools.every((t) => t.description === description));
+      assert.ok(listed.tools!.every((t) => t.description === description));
       const called = await invoke("call");
-      assert.equal(called.result.content[0].text, content);
-      assert.equal(called.result.isError, false);
+      const result =
+        called.result as import("@modelcontextprotocol/sdk/types.js").CallToolResult;
+      assert.equal(result.content[0].type, "text");
+      assert.equal(result.content[0].text, content);
+      assert.equal(result.isError, false);
     } finally {
-      await new Promise((resolve) => server.close(resolve));
+      await runtime.close();
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
     }
   },
 );

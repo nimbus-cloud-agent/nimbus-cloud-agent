@@ -10,7 +10,13 @@ import Rich from "./Rich";
 import PlanReview from "./PlanReview";
 import PlanReviewRetry from "./PlanReviewRetry";
 import { Fold } from "./components";
-import { api, type Event, type Outbox, type UserQuestion } from "./api";
+import {
+  api,
+  type Event,
+  type Outbox,
+  type UserQuestion,
+  type StreamFrame,
+} from "./api";
 import ImageGallery from "./ImageGallery";
 import { ToolCall, ExecutionProcess } from "./ToolCalls";
 import {
@@ -30,7 +36,7 @@ export default function Conversation({
   sessionId: string;
   events: Event[];
   outbox: Outbox[];
-  frames: any[];
+  frames: StreamFrame[];
   questions: UserQuestion[];
   retryError: (s: string) => void;
 }) {
@@ -65,7 +71,7 @@ export default function Conversation({
             st.step = p.step;
             st.turn = p.turn;
           }
-          if (p.chunk?.type === "text-delta") st.text += p.chunk.text;
+          if (p.chunk?.type === "text-delta") st.text += p.chunk.text ?? "";
           if (p.chunk?.type === "reasoning-delta")
             st.reasoning += p.chunk.text ?? p.chunk.reasoning ?? "";
           if (p.type === "end") st.ended = p.outcome?.seq;
@@ -80,7 +86,7 @@ export default function Conversation({
               e.type === "tool/ptc-dispatch" &&
               e.payload.data.name === "exit_plan_mode" &&
               e.payload.data.isError &&
-              typeof e.payload.data.arguments?.plan === "string" &&
+              typeof e.tool?.args.plan === "string" &&
               text(e.payload.data.content).includes(
                 "no user-questions channel is available",
               ),
@@ -104,7 +110,7 @@ export default function Conversation({
         const finalMessage = [...assistants]
           .reverse()
           .find(
-            (e) => e.seq > lastToolSeq && text(e.payload.data.message.content),
+            (e) => e.seq > lastToolSeq && text(e.payload.data.message?.content),
           );
         const pendingReviews = questions.filter(
           (q) => q.turn_id === o.turn_id && q.status === "pending",
@@ -124,7 +130,7 @@ export default function Conversation({
         );
         const duration =
           started && turnEnd
-            ? (turnEnd.payload.time - started.payload.time) / 1000
+            ? ((turnEnd.payload.time ?? 0) - (started.payload.time ?? 0)) / 1000
             : undefined;
         const processContent = (
           <>
@@ -141,11 +147,13 @@ export default function Conversation({
                       waiting={waiting}
                     />
                   );
-                const content = e.payload.data.message.content;
-                const reasoning = content
-                  ?.filter((b: any) => b.type === "reasoning")
-                  .map((b: any) => b.text ?? b.reasoning)
-                  .join("");
+                const content = e.payload.data.message?.content;
+                const reasoning = Array.isArray(content)
+                  ? content
+                      .filter((b) => b.type === "reasoning")
+                      .map((b) => b.text ?? b.reasoning)
+                      .join("")
+                  : "";
                 return (
                   <div key={e.seq}>
                     {reasoning && (
@@ -240,7 +248,7 @@ export default function Conversation({
                 processContent
               )}
               {finalMessage && (
-                <Rich>{text(finalMessage.payload.data.message.content)}</Rich>
+                <Rich>{text(finalMessage.payload.data.message?.content)}</Rich>
               )}
               {unresolved.map(
                 (st, j) => st.text && <Rich key={j}>{st.text}</Rich>,
@@ -254,7 +262,7 @@ export default function Conversation({
                 <PlanReviewRetry
                   sessionId={sessionId}
                   seq={failedReview.seq}
-                  plan={failedReview.payload.data.arguments.plan}
+                  plan={failedReview.tool?.args.plan ?? ""}
                 />
               )}
               {!o.outcome && o.status !== "failed" && (
