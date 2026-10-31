@@ -1,7 +1,6 @@
 package server
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -322,95 +321,6 @@ func checkPreset(sess model.Session, opts model.Options) error {
 		return fmt.Errorf("此会话的工具模式已固定；切换 Standard / PTC 请新建会话")
 	}
 	return nil
-}
-func (s *Server) stream(c *gin.Context) {
-	x, ok := s.session(c)
-	if !ok {
-		return
-	}
-	after := int64(-1)
-	v := c.GetHeader("Last-Event-ID")
-	if v == "" {
-		v = c.Query("after_seq")
-	}
-	if n, e := strconv.ParseInt(v, 10, 64); e == nil {
-		after = n
-	}
-	c.Header("Content-Type", "text/event-stream")
-	c.Header("Connection", "keep-alive")
-	c.Header("X-Accel-Buffering", "no")
-	c.Writer.Flush()
-	tick := time.NewTicker(250 * time.Millisecond)
-	defer tick.Stop()
-	heartbeat := time.NewTicker(streamHeartbeatInterval)
-	defer heartbeat.Stop()
-	lastState, lastOutbox, lastQuestions := "", "", ""
-	var frameAfter int64
-	for {
-		events, err := s.events(c.Request.Context(), store.EventFilter{SessionID: x.ID, After: after, Limit: 1000})
-		if err != nil {
-			return
-		}
-		for _, ev := range events {
-			data, _ := json.Marshal(ev)
-			if _, e := fmt.Fprintf(c.Writer, "id: %d\nevent: session\ndata: %s\n\n", ev.Seq, data); e != nil {
-				return
-			}
-			after = ev.Seq
-		}
-		if x, err = s.getSession(c.Request.Context(), x.ID); err != nil {
-			return
-		}
-		view, err := s.view(c.Request.Context(), x)
-		if err != nil {
-			return
-		}
-		st, _ := json.Marshal(view)
-		if string(st) != lastState {
-			fmt.Fprintf(c.Writer, "event: state\ndata: %s\n\n", st)
-			lastState = string(st)
-		}
-		out, err := s.outboxes(c.Request.Context(), store.OutboxFilter{SessionID: x.ID})
-		if err != nil {
-			return
-		}
-		ob, _ := json.Marshal(out)
-		if string(ob) != lastOutbox {
-			fmt.Fprintf(c.Writer, "event: outbox\ndata: %s\n\n", ob)
-			lastOutbox = string(ob)
-		}
-		items, err := s.questions(c.Request.Context(), x.ID)
-		if err != nil {
-			return
-		}
-		questions, _ := json.Marshal(items)
-		if string(questions) != lastQuestions {
-			fmt.Fprintf(c.Writer, "event: questions\ndata: %s\n\n", questions)
-			lastQuestions = string(questions)
-		}
-		frames, err := s.frames(c.Request.Context(), store.FrameFilter{SessionID: x.ID, After: frameAfter})
-		if err != nil {
-			return
-		}
-		for _, f := range frames {
-			raw, _ := json.Marshal(f)
-			fmt.Fprintf(c.Writer, "event: frame\ndata: %s\n\n", raw)
-			frameAfter = f.ID
-		}
-		c.Writer.Flush()
-		select {
-		case <-c.Request.Context().Done():
-			return
-		case <-s.ctx.Done():
-			return
-		case <-heartbeat.C:
-			if _, e := fmt.Fprint(c.Writer, ": heartbeat\n\n"); e != nil {
-				return
-			}
-			c.Writer.Flush()
-		case <-tick.C:
-		}
-	}
 }
 func (s *Server) deleteSession(c *gin.Context) {
 	x, ok := s.session(c)

@@ -176,13 +176,11 @@ func (s *Store) Events(ctx context.Context, f EventFilter) ([]Event, error) {
 func (s *Store) CreateEvent(ctx context.Context, row Event) error {
 	return dbError(s.db.WithContext(ctx).Create(&row).Error)
 }
-func (s *Store) NotifySession(ctx context.Context, id string) error {
-	return s.db.WithContext(ctx).Exec("SELECT pg_notify('session_events', ?)", id).Error
-}
 
 type FrameFilter struct {
 	SessionID, TurnID string
 	After             int64
+	Limit             int
 }
 
 func (s *Store) Frames(ctx context.Context, f FrameFilter) ([]StreamFrame, error) {
@@ -194,11 +192,23 @@ func (s *Store) Frames(ctx context.Context, f FrameFilter) ([]StreamFrame, error
 	if f.TurnID != "" {
 		q = q.Where("turn_id=?", f.TurnID)
 	}
+	if f.Limit > 0 {
+		q = q.Limit(f.Limit)
+	}
 	err := q.Order("id").Find(&rows).Error
 	return rows, dbError(err)
 }
 func (s *Store) CreateFrame(ctx context.Context, row StreamFrame) error {
-	return dbError(s.db.WithContext(ctx).Create(&row).Error)
+	// Allocate the frame ID only after taking the session lock. Otherwise two
+	// concurrent frame writers could commit IDs out of order and a cursor-based
+	// reader could permanently skip the later commit with the smaller ID.
+	return s.Transaction(ctx, func(tx *Store) error {
+		var parent Session
+		if err := tx.db.WithContext(ctx).Select("id").Clauses(clause.Locking{Strength: "UPDATE"}).First(&parent, "id=?", row.SessionID).Error; err != nil {
+			return dbError(err)
+		}
+		return dbError(tx.db.WithContext(ctx).Create(&row).Error)
+	})
 }
 func (s *Store) Sandbox(ctx context.Context, sid string) (Sandbox, error) {
 	var row Sandbox

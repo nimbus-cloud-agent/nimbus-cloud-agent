@@ -17,8 +17,9 @@ import (
 var migrations embed.FS
 
 type Store struct {
-	db   *gorm.DB
-	lock *sql.Conn
+	db            *gorm.DB
+	lock          *sql.Conn
+	notifications *notificationSource
 }
 
 func Open(dsn string) (*Store, error) {
@@ -90,11 +91,18 @@ func Open(dsn string) (*Store, error) {
 		}
 	}
 
+	notifications, err := newNotificationSource(dsn)
+	if err != nil {
+		return nil, err
+	}
 	opened = true
-	return &Store{db: db, lock: conn}, nil
+	return &Store{db: db, lock: conn, notifications: notifications}, nil
 }
 
 func (s *Store) Close() error {
+	if s.notifications != nil {
+		s.notifications.close()
+	}
 	if s.lock != nil {
 		_ = s.lock.Close()
 	}

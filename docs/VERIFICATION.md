@@ -5,7 +5,7 @@
 | 项目 | 实际结果 |
 | --- | --- |
 | 独立 runtime 包 | `make pack-runtime` 生成 npm tarball，在仓库外的全新目录安装；无 Harness 路径配置，CLI 版本与 RPC preflight 成功；Go 使用该安装完整通过真实常驻服务及图片端到端验证 |
-| 按需生成 | 删除两端生成目录与 TS 编译产物后直接 `make` 成功；`make test` 自动生成并运行 18 项 TypeScript 测试和 Go race / PostgreSQL 集成测试；Git 未跟踪生成代码、dist 或 tarball |
+| 按需生成 | 删除两端生成目录与 TS 编译产物后直接 `make` 成功；`make test` 自动生成并运行 19 项 JS/TS 测试和 Go race / PostgreSQL 集成测试；Git 未跟踪生成代码、dist 或 tarball |
 | 编译与静态检查 | 前端 TypeScript / Vite 构建、Go 构建、`go test ./...`、`go vet ./...` 通过 |
 | Wasm 隔离 | 9 项自动检查通过：TypeScript 与 SDK、无限循环中断、禁止 Node import、异步错误、悬空 Promise 截止时间、256 MiB 内存上限、ToolCallError 类型，以及等待评审不占执行时间、等待期间 CPU 限制与取消仍有效 |
 | 前端类型边界 | HTTP / SSE / WebSocket 使用明确的事件、帧、设置、MCP 模型；工具参数与结果在入口归一化，组件不使用 `any` 或二次 JSON 解析；自动测试覆盖原生 PTC 关联、失败结果和异常字段 |
@@ -37,8 +37,11 @@
 | 工具展示与折叠 | 参考 DSH Web 的工具摘要和调用树，用 HeroUI 实现整轮 / 单工具折叠；Chrome 验证 PTC 子调用去重与嵌套、命令失败和退出码、文件内容复制、Enter / Space 操作、SSE 更新保留用户折叠选择、已中断调用及 390px 布局 |
 | Preset 生命周期 | PostgreSQL 隔离 schema 集成测试及 race 检查通过：空会话可选、首条消息锁定、并发异模式首次发送仅一个成功、PATCH / 部分消息参数 / SQL 均不能绕过、失败消息重试保留锁定、旧混合会话迁移保留原生历史 |
 | 模型验证 | 官方更新博客、模型文档及真实 `/models` 均确认 Flash 的 API 名称为 `deepseek-flash`；产品仅提供 Flash，后端拒绝旧模型名 |
+| PG 通知与 Go 迭代器 | Go 基线 1.25；DAO `iter.Seq2` 消费通知，业务 `iter.Seq` 消费合并后的唤醒。集成测试覆盖提交前不可见、回滚无通知、六类表与删除级联、schema 隔离、终止监听连接后的重连和补读 |
+| SSE 空闲查询 | 同时打开列表和会话流，并运行 outbox dispatcher；跨过一次 5 秒心跳，独立测试 schema 的所有数据连接 `pg_stat_activity.query_start` 保持不变，验证没有空闲轮询查询 |
+| SSE 重放与背压 | 单事务写入超过 1000 条事件和帧，仅靠合并通知完整读完全部页；验证 Last-Event-ID 重连、25 ms 通知合并、跨会话过滤、迭代器退出清理、内存 provisioning 推送、并发帧提交不跳游标 |
 | 会话列表推送 | 浏览器持续订阅 `/api/sessions/stream`，观察期间没有 GET `/api/sessions` 轮询；标题修改实时到达，重新连接收到最新列表快照 |
-| SSE 心跳 | 列表流与对话流实测相邻心跳分别为 5000 ms、5001 ms；数据推送不受 5 秒心跳间隔影响 |
+| SSE 心跳 | LISTEN/NOTIFY 改造后，列表流与对话流实测相邻心跳分别为 4999 ms、5000 ms；数据推送不受 5 秒心跳间隔影响 |
 | 图片 | Chrome 文件选择、粘贴、缩略图、大图预览、移除通过；Flash 真实识别测试图文字 `NIMBUS 4729`，原生 user/message 包含 image 附件；刷新后图片可见，后续轮次恢复附件并回答正确，未创建 E2B 沙箱 |
 | 图片边界 | 数据库集成测试覆盖跨会话图片读取与引用、伪造格式、无效 / 重复图片 ID、数量上限、纯图片消息及删除会话级联清理图片 |
 | 图片重启恢复 | 第一轮仅让模型回复“收到”；停止后端并删除测试会话的本地轮次缓存，重新启动后仍可读取图片、preset 仍锁定，第二轮 Flash 正确读出此前未转写的 `ORBIT 5938`；证明图片从 PostgreSQL 恢复 |
@@ -59,7 +62,7 @@ node scripts/plan-e2e.mjs
 node scripts/tool-ui-check.mjs
 ```
 
-Preset、模型迁移、图片归属和计划评审的数据库集成测试使用独立临时 schema，不调用模型、不改动现有会话：
+Preset、模型迁移、图片归属、计划评审，以及 PG 通知 / SSE 空闲查询与重连的数据库集成测试使用独立临时 schema，不调用模型、不改动现有会话：
 
 ```sh
 NIMBUS_TEST_DATABASE_URL='postgres://nimbus@127.0.0.1:55432/nimbus?sslmode=disable' make test
@@ -77,7 +80,7 @@ MCP 需要另一个终端先运行 `node scripts/mcp-fixture.mjs`，再执行 `n
 - 这是单用户、仅绑定本机回环地址的应用；不包含公网部署、登录、多租户或多实例调度。
 - 常驻服务复用 Node 进程和工作线程；每轮仍新建 DSH 上下文和从数据库恢复工作目录。崩溃后不自动重放已接收的工具调用，外部服务已开始的副作用无法回滚。
 - Go 二进制仅内嵌前端；`nimbus-agent-runtime` 单独作为 npm 包安装，明确依赖 Harness，运行时代码为 TypeScript。Go 只检查 Nimbus 协议并调用 runtime，不再接收 Harness 路径。需要 Node.js 24.11+；npm 包尚未发布到公共 registry，可安装构建出的 tarball。
-- DSH RC.5 的公共持久化事件不包含每个 token。增量帧单独存入 PostgreSQL，恢复时提供明确标识的中断上下文。服务端 SSE 使用 250 ms 数据库变更检查，客户端不轮询；心跳独立为 5 秒。尚未切换为 LISTEN 驱动。详见 ARCHITECTURE.md。
+- DSH RC.5 的公共持久化事件不包含每个 token。增量帧单独存入 PostgreSQL，恢复时提供明确标识的中断上下文。服务端 SSE 由 PostgreSQL LISTEN/NOTIFY 驱动，空闲和心跳不查库；监听重连后按游标补读。客户端不轮询，心跳独立为 5 秒。E2B reaper 仍每 30 秒检查云端生命周期。详见 ARCHITECTURE.md。
 - E2B 单次同步命令当前最多执行 55 秒、输出上限 1 MiB；长任务可以在沙箱内启动后台进程，再轮询日志。沙箱内容不备份到 Mac，销毁后不能恢复。
 - OAuth 已通过协议测试，也使用用户已有 Notion 授权完成了真实只读调用；没有自动执行第三方登录。第三方服务是否要求预注册 OAuth 客户端、是否接受本机 HTTP 回调，取决于该服务策略。
 - 没有压测 20 个真实并发沙箱或等待完整一小时来测试云端暂停。容量锁、等待、近到期暂停与 E2B onTimeout=pause 已实现。

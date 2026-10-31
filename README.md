@@ -22,7 +22,7 @@ PostgreSQL listens only on `127.0.0.1:55432`; its data is in `.local/postgres/`.
 
 ## Fresh macOS installation
 
-Prerequisites: Homebrew, Node.js **24.11+**, Go **1.25+**, DeepSeek and E2B API keys.
+Prerequisites: Homebrew, Node.js **24.11+**, Go **1.25+** (also enforced by `go.mod`), DeepSeek and E2B API keys.
 
 ```sh
 npm run setup:mac
@@ -90,7 +90,7 @@ Changing a key or template in the UI takes effect on subsequent turns/new sandbo
 - Native `exit_plan_mode` opens a persistent plan review in the conversation. Approve to leave Plan and continue, send revision feedback to keep planning, or defer to end the turn without approval. Browser refresh retains pending reviews; Stop or a backend restart interrupts them. Human review time does not consume the PTC execution deadline.
 - Upload, paste, or drag PNG, JPEG, WebP and GIF images into the composer; preview/remove before sending and view full images in history. Up to 4 images per message, 5 MiB per image and 10 MiB total. GIF input uses the first frame. Native DSH image attachments are retained in PostgreSQL and restored on later turns; image-only messages are supported. Viewing or analyzing an image does not require an E2B sandbox.
 - TypeScript PTC runs in QuickJS WebAssembly; 256 MiB maximum linear memory and 120-second default / 600-second maximum execution deadline. No host filesystem, environment, network, or process primitives are exposed to generated programs.
-- Session lists and the active conversation use EventSource streams, with changes pushed as they happen and independent 5-second heartbeats. There is no browser session-list polling.
+- Session lists and the active conversation use EventSource streams driven by PostgreSQL LISTEN/NOTIFY. One shared DAO listener replaces per-connection database polling; reconnects catch up from durable cursors. Five-second heartbeats do not query the database.
 - Database-backed Skills: create/edit/delete/enable, multi-file text editor/upload, 100-file and 5 MiB limits with all-or-nothing validation.
 - Streamable HTTP MCP: enable/edit/delete, connectivity test, OAuth discovery, dynamic registration, PKCE, callback state validation, server-side token storage and refresh. Actual third-party OAuth authorization still requires the account owner's browser login.
 

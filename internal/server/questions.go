@@ -114,29 +114,28 @@ func (s *Server) waitQuestion(ctx context.Context, out model.Outbox, request mod
 	if len(request.Questions) == 0 || len(request.Questions) > 10 {
 		return model.QuestionAnswer{}, fmt.Errorf("invalid user question batch")
 	}
+	updates := s.updates.subscribe(out.SessionID, questionsChanged|sessionChanged)
+	defer updates.close()
 	q := model.UserQuestion{ID: uuid.NewString(), SessionID: out.SessionID, TurnID: out.TurnID, Questions: request.Questions, Status: "pending", CreatedAt: time.Now()}
 	if err := s.S.CreateQuestion(ctx, store.UserQuestion(q)); err != nil {
 		return model.QuestionAnswer{}, err
 	}
 	defer s.S.InterruptQuestions(context.WithoutCancel(ctx), q.ID)
-	tick := time.NewTicker(200 * time.Millisecond)
-	defer tick.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return model.QuestionAnswer{}, ctx.Err()
-		case <-tick.C:
-			row, err := s.S.Question(ctx, q.ID)
-			if err != nil {
-				return model.QuestionAnswer{}, err
-			}
-			q = model.UserQuestion(row)
-			if (q.Status == "answered" || q.Status == "dismissed") && q.Answer != nil {
-				return *q.Answer, nil
-			}
-			if q.Status != "pending" {
-				return model.QuestionAnswer{}, fmt.Errorf("user question interrupted")
-			}
+	for range updates.signals(ctx, 0) {
+		row, err := s.S.Question(ctx, q.ID)
+		if err != nil {
+			return model.QuestionAnswer{}, err
+		}
+		q = model.UserQuestion(row)
+		if (q.Status == "answered" || q.Status == "dismissed") && q.Answer != nil {
+			return *q.Answer, nil
+		}
+		if q.Status != "pending" {
+			return model.QuestionAnswer{}, fmt.Errorf("user question interrupted")
 		}
 	}
+	if ctx.Err() != nil {
+		return model.QuestionAnswer{}, ctx.Err()
+	}
+	return model.QuestionAnswer{}, fmt.Errorf("user question interrupted")
 }

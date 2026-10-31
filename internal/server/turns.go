@@ -16,46 +16,59 @@ import (
 
 func (s *Server) scheduler() {
 	defer s.wg.Done()
-	t := time.NewTicker(200 * time.Millisecond)
-	defer t.Stop()
-	for {
-		select {
-		case <-s.ctx.Done():
-			return
-		case <-t.C:
-			queue, err := s.outboxes(s.ctx, store.OutboxFilter{Status: "queued"})
-			if err != nil {
+	updates := s.updates.subscribe("", outboxChanged)
+	for range updates.signals(s.ctx, 0) {
+		queue, err := s.outboxes(s.ctx, store.OutboxFilter{Status: "queued"})
+		if err != nil {
+			// Retry only failed reads. A healthy idle scheduler performs no queries.
+			timer := time.NewTimer(time.Second)
+			select {
+			case <-s.ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
+			s.updates.publish("", outboxChanged)
+			continue
+		}
+		for _, out := range queue {
+			s.mu.Lock()
+			_, deleting := s.deleting.Load(out.SessionID)
+			if deleting || s.running[out.SessionID] != nil {
+				s.mu.Unlock()
 				continue
 			}
-			for _, o := range queue {
+			ctx, cancel := context.WithCancel(s.ctx)
+			run := &runningTurn{cancel: cancel, done: make(chan struct{})}
+			s.running[out.SessionID] = run
+			s.mu.Unlock()
+			s.wg.Add(1)
+			go func(out model.Outbox) {
+				defer s.wg.Done()
+				defer cancel()
+				defer close(run.done)
+				if !s.runTurn(ctx, out) {
+					// A failed initial DAO read/write leaves the row queued.
+					// Back off before releasing its slot instead of immediately
+					// waking the dispatcher into an error retry loop.
+					retry := time.NewTimer(time.Second)
+					select {
+					case <-ctx.Done():
+						retry.Stop()
+					case <-retry.C:
+					}
+				}
 				s.mu.Lock()
-				if _, deleting := s.deleting.Load(o.SessionID); deleting {
-					s.mu.Unlock()
-					continue
-				}
-				if s.running[o.SessionID] != nil {
-					s.mu.Unlock()
-					continue
-				}
-				ctx, cancel := context.WithCancel(s.ctx)
-				run := &runningTurn{cancel: cancel, done: make(chan struct{})}
-				s.running[o.SessionID] = run
+				delete(s.running, out.SessionID)
 				s.mu.Unlock()
-				s.wg.Add(1)
-				go func(o model.Outbox) {
-					defer s.wg.Done()
-					defer cancel()
-					defer close(run.done)
-					s.runTurn(ctx, o)
-					s.mu.Lock()
-					delete(s.running, o.SessionID)
-					s.mu.Unlock()
-				}(o)
-			}
+				// The completion commit can notify before the running slot is released.
+				// Wake once more after release so a queued next turn cannot be stranded.
+				s.updates.publish(out.SessionID, outboxChanged)
+			}(out)
 		}
 	}
 }
-func (s *Server) runTurn(ctx context.Context, o model.Outbox) {
+func (s *Server) runTurn(ctx context.Context, o model.Outbox) (started bool) {
 	sess, err := s.getSession(ctx, o.SessionID)
 	if err != nil {
 		return
@@ -63,6 +76,7 @@ func (s *Server) runTurn(ctx context.Context, o model.Outbox) {
 	if err = s.S.UpdateOutbox(ctx, o.ID, store.OutboxChanges{Status: ptr("starting"), Error: ptr("")}); err != nil {
 		return
 	}
+	started = true
 	_ = s.S.UpdateSession(ctx, sess.ID, store.SessionChanges{AgentState: ptr("starting")})
 	outcome := "completed"
 	var turnErr error
@@ -206,6 +220,7 @@ func (s *Server) runTurn(ctx context.Context, o model.Outbox) {
 		}
 		return result, nil
 	})
+	return
 }
 
 // The application combines DAO operations while Store owns row locking, SQL and
@@ -247,7 +262,7 @@ func (s *Server) appendRecord(ctx context.Context, sid, oid string, record model
 		if err = tx.UpdateSession(ctx, sid, changes); err != nil {
 			return err
 		}
-		return tx.NotifySession(ctx, sid)
+		return nil
 	})
 }
 

@@ -43,6 +43,7 @@ type Server struct {
 	cancel        context.CancelFunc
 	wg            sync.WaitGroup
 	capacity      sync.Mutex
+	updates       changeHub
 	BaseURL       string
 }
 
@@ -58,6 +59,7 @@ func New(c config.Config, st *store.Store, frontend fs.FS, runtime *executor.Run
 		return nil, e
 	}
 
+	s.startChanges()
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.Use(gin.Recovery(), s.guard)
@@ -178,6 +180,7 @@ func (s *Server) lock(id string) *sync.Mutex {
 }
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.cancel()
+	s.updates.close()
 	s.mu.Lock()
 	for _, r := range s.running {
 		r.cancel()

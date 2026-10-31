@@ -15,6 +15,7 @@ func TestPlanReviewLifecycle(t *testing.T) {
 	db := optionsDB(t)
 	r := optionsRouter(db)
 	s := &Server{S: db}
+	startTestChanges(t, s)
 	a := expectOptions(t, r, 201, "POST", "/sessions", nil)
 	b := expectOptions(t, r, 201, "POST", "/sessions", nil)
 	sid := a["id"].(string)

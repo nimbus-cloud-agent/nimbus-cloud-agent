@@ -28,7 +28,8 @@ func (s *Server) ensureSandbox(ctx context.Context, sid string) (model.Sandbox, 
 		return sb, nil
 	}
 	s.provisioning.Store(sid, "正在创建 / 唤醒沙箱…")
-	defer s.provisioning.Delete(sid)
+	s.updates.publish(sid, sandboxChanged)
+	defer func() { s.provisioning.Delete(sid); s.updates.publish(sid, sandboxChanged) }()
 	deadline := time.Now().Add(60 * time.Second)
 	for {
 		s.capacity.Lock()
@@ -62,6 +63,7 @@ func (s *Server) ensureSandbox(ctx context.Context, sid string) (model.Sandbox, 
 	if err != nil {
 		message := s.redact(err.Error())
 		s.sandboxErrors.Store(sid, message)
+		s.updates.publish(sid, sandboxChanged)
 		if sb.ID != "" {
 			_ = s.S.UpdateSandbox(context.WithoutCancel(ctx), sb.ID, store.SandboxChanges{Error: &message})
 		}
@@ -84,6 +86,7 @@ func (s *Server) ensureSandbox(ctx context.Context, sid string) (model.Sandbox, 
 		return sb, err
 	}
 	s.sandboxErrors.Delete(sid)
+	s.updates.publish(sid, sandboxChanged)
 	return sb, nil
 }
 func (s *Server) pause(ctx context.Context, sid string) error {
