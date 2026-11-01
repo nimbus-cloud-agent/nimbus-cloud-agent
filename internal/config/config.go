@@ -51,7 +51,7 @@ func Command(run func(Config) error) *cobra.Command {
 		return run(c)
 	}
 	root.AddCommand(&cobra.Command{Use: "serve", RunE: root.RunE}, &cobra.Command{Use: "version", Run: func(cmd *cobra.Command, args []string) {
-		fmt.Fprintln(cmd.OutOrStdout(), "Nimbus 0.1.0 / agent-runtime protocol v2")
+		fmt.Fprintln(cmd.OutOrStdout(), "Nimbus 0.1.0 / agent-runtime protocol v3")
 	}})
 	return root
 }
