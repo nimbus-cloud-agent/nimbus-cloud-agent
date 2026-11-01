@@ -49,10 +49,14 @@ FROM node:24-bookworm-slim AS runtime
 
 RUN useradd -m -u 10001 nimbus
 COPY --from=builder /src/bin/nimbus-cloud-agent /usr/local/bin/nimbus-cloud-agent
-COPY --from=builder /usr/local/bin/nimbus-agent-runtime /usr/local/bin/nimbus-agent-runtime
 COPY --from=builder /usr/local/lib/node_modules/nimbus-agent-runtime /usr/local/lib/node_modules/nimbus-agent-runtime
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh \
+# npm's global bin is a symlink to dist/service.js. Copying that bin into this
+# stage flattens it into /usr/local/bin, which breaks its relative imports.
+# Invoke the package entrypoint from its installed directory instead.
+RUN printf '%s\n' '#!/bin/sh' 'exec node /usr/local/lib/node_modules/nimbus-agent-runtime/dist/service.js "$@"' \
+      > /usr/local/bin/nimbus-agent-runtime \
+    && chmod +x /usr/local/bin/nimbus-agent-runtime /usr/local/bin/docker-entrypoint.sh \
     && mkdir -p /tmp/turns && chown -R nimbus:nimbus /tmp/turns
 
 USER nimbus
