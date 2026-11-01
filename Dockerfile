@@ -38,7 +38,8 @@ COPY vmrelay/ vmrelay/
 # then the Go binary with the frontend embedded. `pack-runtime` produces
 # release/nimbus-agent-runtime-0.3.0.tgz, installed globally below so the
 # Go binary finds `nimbus-agent-runtime` on PATH at runtime.
-RUN make build \
+RUN npm ci \
+    && make build \
     && make pack-runtime \
     && npm install -g ./release/nimbus-agent-runtime-*.tgz \
     && nimbus-agent-runtime --version 2>/dev/null || true \
