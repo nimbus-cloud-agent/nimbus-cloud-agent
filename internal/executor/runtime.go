@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,13 +19,57 @@ import (
 var ErrRuntimeLost = runtimeprotocol.ErrDisconnected
 
 type connection struct {
-	cmd    *exec.Cmd
-	in     io.WriteCloser
-	ctx    context.Context
-	done   chan struct{}
-	peer   *runtimeprotocol.Peer
-	client generated.RuntimeClient
+	cmd         *exec.Cmd
+	in          io.WriteCloser
+	ctx         context.Context
+	done        chan struct{}
+	peer        *runtimeprotocol.Peer
+	client      generated.RuntimeClient
+	diagnostics *runtimeDiagnostics
 }
+
+const maxRuntimeDiagnosticBytes = 4096
+
+// runtimeDiagnostics retains only a bounded stderr tail for the initial
+// protocol check. Runtime stderr is never logged during normal operation.
+type runtimeDiagnostics struct {
+	mu     sync.Mutex
+	data   []byte
+	active bool
+}
+
+func (d *runtimeDiagnostics) Write(p []byte) (int, error) {
+	n := len(p)
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if !d.active {
+		return n, nil
+	}
+	if len(p) >= maxRuntimeDiagnosticBytes {
+		d.data = append(d.data[:0], p[len(p)-maxRuntimeDiagnosticBytes:]...)
+		return n, nil
+	}
+	if excess := len(d.data) + len(p) - maxRuntimeDiagnosticBytes; excess > 0 {
+		copy(d.data, d.data[excess:])
+		d.data = d.data[:len(d.data)-excess]
+	}
+	d.data = append(d.data, p...)
+	return n, nil
+}
+
+func (d *runtimeDiagnostics) String() string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return strings.TrimSpace(string(d.data))
+}
+
+func (d *runtimeDiagnostics) Reset() {
+	d.mu.Lock()
+	d.data = nil
+	d.active = false
+	d.mu.Unlock()
+}
+
 type pipes struct {
 	io.Reader
 	io.Writer
@@ -78,9 +123,9 @@ func (r *Runtime) supervise() {
 	for r.ctx.Err() == nil {
 		started := time.Now()
 		cmd := exec.Command(r.command)
+		diagnostics := &runtimeDiagnostics{active: true}
 		cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME"), "LANG=en_US.UTF-8", "NODE_NO_WARNINGS=1"}
-		// SDK diagnostics can contain credentials; protocol failures expose no raw stderr.
-		cmd.Stderr = io.Discard
+		cmd.Stderr = diagnostics
 		in, err := cmd.StdinPipe()
 		if err != nil {
 			return
@@ -92,7 +137,7 @@ func (r *Runtime) supervise() {
 		}
 		if err = cmd.Start(); err == nil {
 			ctx, cancel := context.WithCancel(r.ctx)
-			c := &connection{cmd: cmd, in: in, ctx: ctx, done: make(chan struct{})}
+			c := &connection{cmd: cmd, in: in, ctx: ctx, done: make(chan struct{}), diagnostics: diagnostics}
 			c.peer = runtimeprotocol.New(ctx, &pipes{Reader: out, Writer: in, in: in, out: out}, func(callbackCtx context.Context, method string, params json.RawMessage) (any, error) {
 				return generated.DispatchControl(callbackCtx, controlReceiver{r}, method, params)
 			})
