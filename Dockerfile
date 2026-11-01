@@ -24,6 +24,7 @@ RUN curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-l
     && node --version && npm --version && go version
 
 WORKDIR /src
+COPY Makefile ./
 COPY package.json package-lock.json ./
 COPY runtime/ runtime/
 COPY web/ web/
