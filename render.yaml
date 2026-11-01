@@ -4,6 +4,9 @@ services:
     runtime: image
     image:
       url: ghcr.io/nimbus-cloud-agent/nimbus-cloud-agent:dev
+      creds:
+        fromRegistryCreds:
+          name: GitHub Container Registry
     plan: free
     region: singapore
     healthCheckPath: /api/health
