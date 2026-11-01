@@ -4,7 +4,7 @@
 
 Plan a task, review its execution, and work with the resulting files in a live terminal. Nimbus runs on **macOS or Linux**, with **DeepSeek Flash** for reasoning and **E2B** for isolated Linux execution. Your computer runs the control plane; no local VM, Docker, or dedicated Linux host is required.
 
-[Quick start](#quick-start) · [Deployment guide](docs/deployment.md) · [Architecture](ARCHITECTURE.md) · [Contributing](CONTRIBUTING.md)
+[Demo](#demo) · [Quick start](#quick-start) · [Deployment guide](docs/deployment.md) · [Architecture](ARCHITECTURE.md) · [Contributing](CONTRIBUTING.md)
 
 ![Nimbus workspace showing a completed sales analysis and the live E2B terminal](docs/media/workspace.png)
 
@@ -20,6 +20,14 @@ Plan a task, review its execution, and work with the resulting files in a live t
 - **Skills and MCP.** Manage multi-file Skills and connect Streamable HTTP MCP services, including OAuth authorization.
 
 Standard / Wasm PTC is fixed after a session's first message. Plan and thinking settings can change for later turns. Pure chat, image analysis, and MCP-only tasks do not create a sandbox.
+
+## Demo
+
+[![Nimbus demo: approve a plan, expand nested tool calls, and run the analysis in the cloud terminal](docs/media/usage.gif)](docs/media/usage.mp4)
+
+Approve a plan, inspect nested tool calls, and rerun a sales analysis in the cloud terminal. This 30-second recording uses the running application; idle waiting time has been shortened.
+
+[Watch or download the full-resolution MP4](docs/media/usage.mp4) · [Capture notes](docs/media/README.md)
 
 ## Screenshots
 
