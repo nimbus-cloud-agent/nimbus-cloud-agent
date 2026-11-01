@@ -42,12 +42,18 @@ RUN npm ci \
     && make build \
     && make pack-runtime \
     && npm install -g ./release/nimbus-agent-runtime-*.tgz \
-    && nimbus-agent-runtime --version 2>/dev/null || true \
     && ./bin/nimbus-cloud-agent version
 
 FROM node:24-bookworm-slim AS runtime
 
-RUN useradd -m -u 10001 nimbus
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && update-ca-certificates \
+    && test -s /etc/ssl/certs/ca-certificates.crt \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd -m -u 10001 nimbus
+ENV NIMBUS_LOG_LEVEL=debug \
+    NIMBUS_DEPLOY_HANDOFF=true
 COPY --from=builder /src/bin/nimbus-cloud-agent /usr/local/bin/nimbus-cloud-agent
 COPY --from=builder /usr/local/lib/node_modules/nimbus-agent-runtime /usr/local/lib/node_modules/nimbus-agent-runtime
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh

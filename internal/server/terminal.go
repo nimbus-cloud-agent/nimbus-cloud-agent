@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
+	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/logging"
 	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/model"
 )
 
@@ -44,6 +45,7 @@ func (s *Server) terminal(c *gin.Context) {
 	defer stop()
 	pty, err := s.Sandboxes.OpenTerminal(ctx, sb.E2bSandboxID)
 	if err != nil {
+		logging.FromContext(c.Request.Context()).Error("sandbox terminal open failed", "session_id", sess.ID, "sandbox_id", sb.E2bSandboxID, "error", s.redact(err.Error()))
 		_ = ws.SetWriteDeadline(time.Now().Add(10 * time.Second))
 		_ = ws.WriteJSON(gin.H{"error": s.redact(err.Error())})
 		return

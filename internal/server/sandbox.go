@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/logging"
 	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/model"
 	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/store"
 )
@@ -54,6 +56,9 @@ func (s *Server) ensureSandbox(ctx context.Context, sid string) (model.Sandbox, 
 	defer s.capacity.Unlock()
 	opCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
+	logger := logging.FromContext(ctx).With("session_id", sid, "sandbox_id", sb.E2bSandboxID)
+	started := time.Now()
+	logger.DebugContext(ctx, "sandbox provisioning started", "resume", sb.ID != "" && sb.State != "killed")
 	var info model.SandboxInfo
 	if sb.ID != "" && sb.State != "killed" {
 		info, err = s.Sandboxes.Connect(opCtx, sb.E2bSandboxID)
@@ -62,6 +67,7 @@ func (s *Server) ensureSandbox(ctx context.Context, sid string) (model.Sandbox, 
 	}
 	if err != nil {
 		message := s.redact(err.Error())
+		logger.ErrorContext(ctx, "sandbox provisioning failed", "duration_ms", time.Since(started).Milliseconds(), "error", message)
 		s.sandboxErrors.Store(sid, message)
 		s.updates.publish(sid, sandboxChanged)
 		if sb.ID != "" {
@@ -86,6 +92,7 @@ func (s *Server) ensureSandbox(ctx context.Context, sid string) (model.Sandbox, 
 		return sb, err
 	}
 	s.sandboxErrors.Delete(sid)
+	logger.DebugContext(ctx, "sandbox provisioning completed", "duration_ms", time.Since(started).Milliseconds(), "e2b_sandbox_id", info.SandboxID)
 	s.updates.publish(sid, sandboxChanged)
 	return sb, nil
 }
@@ -118,6 +125,7 @@ func (s *Server) reaper() {
 		case <-tick.C:
 			rows, err := s.S.RunningSandboxes(s.ctx)
 			if err != nil {
+				slog.Warn("sandbox reaper database read failed", "error", s.redact(err.Error()))
 				continue
 			}
 			for _, row := range rows {
@@ -141,6 +149,9 @@ func (s *Server) reaper() {
 					ctx, cancel := context.WithTimeout(s.ctx, 60*time.Second)
 					defer cancel()
 					info, err := s.Sandboxes.Info(ctx, sb.E2bSandboxID)
+					if err != nil && s.ctx.Err() == nil {
+						slog.Warn("sandbox reaper provider request failed", "session_id", sb.SessionID, "sandbox_id", sb.E2bSandboxID, "error", s.redact(err.Error()))
+					}
 					if err == nil && (info.State == "paused" || info.State == "running" || info.State == "killed") {
 						_ = s.S.UpdateSandbox(ctx, sb.ID, store.SandboxChanges{State: &info.State, Info: &info})
 					}
@@ -151,7 +162,22 @@ func (s *Server) reaper() {
 }
 
 // Tool parameters have already been decoded and validated by the RPC adapter.
-func (s *Server) executeTool(ctx context.Context, scope toolScope, in model.ToolCall) (model.ToolResult, error) {
+func (s *Server) executeTool(ctx context.Context, scope toolScope, in model.ToolCall) (result model.ToolResult, err error) {
+	ctx = logging.WithAttrs(ctx, "session_id", scope.SessionID, "turn_id", scope.TurnID, "call_id", in.CallID, "tool", in.Name)
+	logger := logging.FromContext(ctx)
+	started := time.Now()
+	logger.DebugContext(ctx, "tool call started")
+	defer func() {
+		if err != nil {
+			level := slog.LevelError
+			if errors.Is(err, context.Canceled) {
+				level = slog.LevelDebug
+			}
+			logger.Log(ctx, level, "tool call failed", "duration_ms", time.Since(started).Milliseconds(), "error", s.redact(err.Error()))
+		} else {
+			logger.DebugContext(ctx, "tool call completed", "duration_ms", time.Since(started).Milliseconds())
+		}
+	}()
 	if err := ctx.Err(); err != nil {
 		return model.ToolResult{}, err
 	}

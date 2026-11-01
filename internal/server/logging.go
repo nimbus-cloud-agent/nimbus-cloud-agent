@@ -8,15 +8,30 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/logging"
 )
 
 func requestLogger() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		started := time.Now()
+		path := c.Request.URL.Path
+		id := uuid.NewString()
+		c.Header("X-Request-ID", id)
+		ctx := logging.WithAttrs(c.Request.Context(), "request_id", id)
+		c.Request = c.Request.WithContext(ctx)
 		c.Next()
-		slog.Info("http request",
+		level := slog.LevelInfo
+		if c.Writer.Status() >= 500 {
+			level = slog.LevelError
+		} else if c.Writer.Status() >= 400 {
+			level = slog.LevelWarn
+		} else if path == "/api/health" {
+			level = slog.LevelDebug
+		}
+		logging.FromContext(ctx).Log(ctx, level, "http request",
 			"method", c.Request.Method,
-			"path", c.Request.URL.Path,
+			"path", path,
 			"status", c.Writer.Status(),
 			"duration_ms", time.Since(started).Milliseconds(),
 			"response_size_bytes", c.Writer.Size(),

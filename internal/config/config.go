@@ -20,6 +20,8 @@ type Config struct {
 	// /api/health behind HTTP Basic Auth. This is the dev-deployment auth
 	// gate; production deployments should use a stronger identity layer.
 	BasicUser, BasicPass string
+	LogLevel             string
+	DeployHandoff        bool
 }
 
 func Command(run func(Config) error) *cobra.Command {
@@ -40,6 +42,8 @@ func Command(run func(Config) error) *cobra.Command {
 	f.String("public-host", "", "Public hostname allowed to reach the server (empty = loopback only)")
 	f.String("basic-user", "", "Basic Auth username (both user and pass must be set to enable)")
 	f.String("basic-pass", "", "Basic Auth password")
+	f.String("log-level", "info", "Log level: debug, info, warn, error")
+	f.Bool("deploy-handoff", false, "Gracefully hand database ownership to a waiting deployment")
 	_ = v.BindPFlags(f)
 	root.RunE = func(cmd *cobra.Command, args []string) error {
 		if p := v.GetString("config"); p != "" {
@@ -53,6 +57,8 @@ func Command(run func(Config) error) *cobra.Command {
 			_ = v.ReadInConfig()
 		}
 		c := Config{Addr: v.GetString("addr"), Postgres: v.GetString("postgres"), RuntimeCommand: v.GetString("runtime-command"), WorkDir: v.GetString("work-dir"), DeepSeekKey: v.GetString("deepseek-api-key"), E2BKey: v.GetString("e2b-api-key"), E2BTemplate: v.GetString("e2b-template"), PublicHost: v.GetString("public-host"), BasicUser: v.GetString("basic-user"), BasicPass: v.GetString("basic-pass")}
+		c.LogLevel = v.GetString("log-level")
+		c.DeployHandoff = v.GetBool("deploy-handoff")
 		if c.Postgres == "" {
 			return fmt.Errorf("--postgres or NIMBUS_POSTGRES is required")
 		}

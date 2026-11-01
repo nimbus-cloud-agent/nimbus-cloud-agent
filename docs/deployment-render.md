@@ -34,8 +34,18 @@ After this, each successful CI run on a push to `dev` publishes a new image and 
 
 ## Logs and runtime configuration
 
-The Go service writes structured JSON logs through Go's standard `log/slog` package to stdout. Render captures stdout and stderr; view the entries under the `nimbus-dev` service's **Logs** page or **Live Tail**. The application logs HTTP method, path, status, duration, and response size. Secrets, headers, and query strings are not included. [Hobby workspace logs](https://render.com/docs/logging) are retained for 7 days.
+The Go service writes structured JSON logs through Go's standard `log/slog` package to stdout. Render captures stdout and stderr; view the entries under the `nimbus-dev` service's **Logs** page or **Live Tail**. Dev defaults to `NIMBUS_LOG_LEVEL=debug`, including health probes, task/tool identities, sandbox operations, and E2B DNS, connection, and TLS diagnostics. Request logs include an `X-Request-ID`, method, path, status, duration, and response size; 4xx and 5xx responses are logged at WARN and ERROR. E2B/tool failures are logged even when returned to the agent rather than an HTTP caller. Headers, query strings, request/response bodies, command output, and file contents are excluded, and configured secrets are redacted. [Hobby workspace logs](https://render.com/docs/logging) are retained for 7 days.
+
+The final container installs `ca-certificates` so Go can verify E2B's public HTTPS certificates. A `tls_unknown_authority` error indicates a trust-store problem; the request's host, TLS diagnostics and error appear in Render logs.
 
 The service receives its runtime configuration from Render environment variables. The database URL and API keys are not baked into the image, and no config file or disk mount is needed. Conversation data lives in PostgreSQL; `/tmp/turns` is temporary working space.
 
 The web service uses Render's Free compute plan in this Blueprint. [Free web services](https://render.com/docs/free) spin down after 15 minutes without inbound traffic and can take about a minute to wake. Upgrade the web service's compute plan in Render if you want it to stay running.
+
+## Database ownership during deployment
+
+Render starts the next instance before retiring the current one. Nimbus remains a single active control plane per database schema; `NIMBUS_DEPLOY_HANDOFF=true` makes these overlapping deployments cooperate. The next instance waits on the same PostgreSQL advisory lock. The current instance detects that waiter, cancels and persists interrupted work, drains HTTP requests, and then releases ownership. Only then can the next instance apply migrations and recover interrupted tasks.
+
+The retiring instance keeps its health endpoint alive with `draining: true` until Render sends SIGTERM, preventing a restart loop. Business requests briefly return 503 with `Retry-After: 2` during the handoff; this is not a guarantee of uninterrupted requests. If the successor releases ownership before Render retires the previous instance, the previous instance can reacquire it and resume serving. A standby probe never asks a healthy successor to give ownership back. The owner also stops serving if its lock connection is lost.
+
+Both versions must understand the handoff protocol. When upgrading from an older binary that reports `database is already owned by another Nimbus process`, stop that legacy instance once before starting the first handoff-enabled image. Subsequent image deploys and environment redeploys use the automatic handoff. The standalone local default continues to reject a second process.

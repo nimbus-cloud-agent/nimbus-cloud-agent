@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"time"
@@ -77,6 +78,7 @@ func (s *Server) runTurn(ctx context.Context, o model.Outbox) (started bool) {
 		return
 	}
 	started = true
+	slog.DebugContext(ctx, "turn started", "session_id", o.SessionID, "turn_id", o.TurnID)
 	_ = s.S.UpdateSession(ctx, sess.ID, store.SessionChanges{AgentState: ptr("starting")})
 	outcome := "completed"
 	var turnErr error
@@ -101,6 +103,13 @@ func (s *Server) runTurn(ctx context.Context, o model.Outbox) (started bool) {
 		}
 		if turnErr != nil {
 			changes.Error = ptr(s.redact(turnErr.Error()))
+			level := slog.LevelError
+			if outcome == "interrupted" {
+				level = slog.LevelInfo
+			}
+			slog.Log(ctx, level, "turn ended with error", "session_id", o.SessionID, "turn_id", o.TurnID, "outcome", outcome, "error", *changes.Error)
+		} else {
+			slog.DebugContext(ctx, "turn completed", "session_id", o.SessionID, "turn_id", o.TurnID, "outcome", outcome)
 		}
 		_ = s.S.Transaction(cleanup, func(tx *store.Store) error {
 			if err := tx.UpdateOutbox(cleanup, o.ID, changes); err != nil {

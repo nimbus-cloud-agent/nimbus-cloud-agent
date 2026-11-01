@@ -3,9 +3,9 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"embed"
-	"fmt"
+	"log/slog"
+	"time"
 
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -18,12 +18,28 @@ var migrations embed.FS
 
 type Store struct {
 	db            *gorm.DB
-	lock          *sql.Conn
+	lock          *ownership
 	notifications *notificationSource
 }
 
 func Open(dsn string) (*Store, error) {
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	return open(context.Background(), dsn, false, false)
+}
+
+// OpenWithHandoff waits for the existing owner to drain before touching schema
+// or recovering tasks. Only deployments opting into handoff relinquish ownership.
+func OpenWithHandoff(ctx context.Context, dsn string) (*Store, error) {
+	return open(ctx, dsn, true, true)
+}
+
+// TryOpenWithHandoff restores a retired owner only if its successor has exited.
+// It never requests another handoff from a healthy successor.
+func TryOpenWithHandoff(ctx context.Context, dsn string) (*Store, error) {
+	return open(ctx, dsn, true, false)
+}
+
+func open(ctx context.Context, dsn string, handoff, wait bool) (*Store, error) {
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent), DisableAutomaticPing: true})
 	if err != nil {
 		return nil, err
 	}
@@ -38,47 +54,52 @@ func Open(dsn string) (*Store, error) {
 		}
 	}()
 	raw.SetMaxOpenConns(20)
-	// One Nimbus owns each schema. Preserve the legacy public-schema lock so
-	// older binaries cannot concurrently own the same production database.
-	conn, err := raw.Conn(context.Background())
+	lock, err := acquireOwnership(ctx, raw, handoff, wait)
 	if err != nil {
 		return nil, err
 	}
-	var locked bool
 	defer func() {
 		if !opened {
-			_ = conn.Close()
+			lock.close()
 		}
 	}()
-	if err = conn.QueryRowContext(context.Background(), `SELECT CASE WHEN current_schema() = 'public' THEN pg_try_advisory_lock(846291710) ELSE pg_try_advisory_lock(846291710, hashtext(current_schema())) END`).Scan(&locked); err != nil {
-		return nil, fmt.Errorf("acquire database ownership: %w", err)
-	}
-	if !locked {
-		return nil, fmt.Errorf("database is already owned by another Nimbus process")
-	}
-	if err = db.Exec("CREATE TABLE IF NOT EXISTS schema_migrations (version text PRIMARY KEY)").Error; err != nil {
+	if err = migrate(ctx, db); err != nil {
 		return nil, err
+	}
+	notifications, err := newNotificationSource(dsn)
+	if err != nil {
+		return nil, err
+	}
+	opened = true
+	return &Store{db: db, lock: lock, notifications: notifications}, nil
+}
+
+func migrate(ctx context.Context, db *gorm.DB) error {
+	db = db.WithContext(ctx)
+	if err := db.Exec("CREATE TABLE IF NOT EXISTS schema_migrations (version text PRIMARY KEY)").Error; err != nil {
+		return err
 	}
 	entries, err := migrations.ReadDir("migrations")
 	if err != nil {
-		return nil, err
+		return err
 	}
 	for _, entry := range entries {
 		version := entry.Name()
 		var n int64
 		if err = db.Table("schema_migrations").Where("version = ?", version).Count(&n).Error; err != nil {
-			return nil, err
+			return err
 		}
 		// Preserve the initial migration marker used by the first local boot.
 		if version == "001_initial.sql" && n == 0 {
 			if err = db.Table("schema_migrations").Where("version = ?", "001").Count(&n).Error; err != nil {
-				return nil, err
+				return err
 			}
 		}
 		if n == 0 {
+			started := time.Now()
 			sql, err := migrations.ReadFile("migrations/" + version)
 			if err != nil {
-				return nil, err
+				return err
 			}
 			if err = db.Transaction(func(tx *gorm.DB) error {
 				if e := tx.Exec(string(sql)).Error; e != nil {
@@ -86,17 +107,23 @@ func Open(dsn string) (*Store, error) {
 				}
 				return tx.Exec("INSERT INTO schema_migrations VALUES (?)", version).Error
 			}); err != nil {
-				return nil, err
+				return err
 			}
+			slog.InfoContext(ctx, "database migration applied", "version", version, "duration_ms", time.Since(started).Milliseconds())
+		} else {
+			slog.DebugContext(ctx, "database migration already applied", "version", version)
 		}
 	}
+	return nil
+}
 
-	notifications, err := newNotificationSource(dsn)
-	if err != nil {
-		return nil, err
+// OwnershipDone yields nil for a cooperative handoff or an error if the lock
+// connection is lost. The owner must stop all work before closing the Store.
+func (s *Store) OwnershipDone() <-chan error {
+	if s.lock == nil {
+		return nil
 	}
-	opened = true
-	return &Store{db: db, lock: conn, notifications: notifications}, nil
+	return s.lock.events
 }
 
 func (s *Store) Close() error {
@@ -104,7 +131,7 @@ func (s *Store) Close() error {
 		s.notifications.close()
 	}
 	if s.lock != nil {
-		_ = s.lock.Close()
+		s.lock.close()
 	}
 	db, err := s.db.DB()
 	if err != nil {

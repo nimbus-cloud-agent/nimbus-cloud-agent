@@ -11,6 +11,10 @@ services:
     region: singapore
     healthCheckPath: /api/health
     envVars:
+      - key: NIMBUS_LOG_LEVEL
+        value: debug
+      - key: NIMBUS_DEPLOY_HANDOFF
+        value: "true"
       - key: NIMBUS_POSTGRES
         fromDatabase:
           name: nimbus-postgres

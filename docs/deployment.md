@@ -143,6 +143,8 @@ Precedence is **CLI flags → `NIMBUS_` environment variables → configuration 
 | `NIMBUS_PUBLIC_HOST` | `--public-host` | Empty; set to the allowed public hostname to enable non-loopback binding |
 | `NIMBUS_BASIC_USER` | `--basic-user` | Empty; set together with `NIMBUS_BASIC_PASS` to enable HTTP Basic Auth |
 | `NIMBUS_BASIC_PASS` | `--basic-pass` | Empty; set together with `NIMBUS_BASIC_USER` to enable HTTP Basic Auth |
+| `NIMBUS_LOG_LEVEL` | `--log-level` | `info` in the standalone binary; `debug` in the source launcher and dev image |
+| `NIMBUS_DEPLOY_HANDOFF` | `--deploy-handoff` | `false` locally; `true` in the dev image to drain an existing instance before taking database ownership |
 
 Prefer environment variables over credential-bearing CLI flags. The Go server enforces loopback access and same-origin requests. The [Render deployment guide](deployment-render.md) documents the public single-user deployment; set both Basic Auth variables there. Nimbus does not provide multi-user authentication or a multi-instance scheduler.
 

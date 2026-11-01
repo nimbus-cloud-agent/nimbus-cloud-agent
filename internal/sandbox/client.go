@@ -37,6 +37,13 @@ func newClient(key, apiURL string, httpClient *http.Client) (*Client, error) {
 	if key == "" {
 		return nil, errors.New("E2B API key is required")
 	}
+	observed := *httpClient
+	base := observed.Transport
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	observed.Transport = &diagnosticTransport{base: base, key: key}
+	httpClient = &observed
 	sdk, err := e2b.NewClient(e2b.ClientConfig{APIKey: key, APIBaseURL: apiURL, HTTPClient: httpClient})
 	if err != nil {
 		return nil, fmt.Errorf("initialize E2B client: %s", strings.ReplaceAll(err.Error(), key, "[REDACTED]"))

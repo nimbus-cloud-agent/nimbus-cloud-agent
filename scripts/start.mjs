@@ -35,6 +35,7 @@ if (process.platform === "darwin" && !process.env.NIMBUS_POSTGRES) {
 }
 const env = {
   ...process.env,
+  NIMBUS_LOG_LEVEL: process.env.NIMBUS_LOG_LEVEL || "debug",
   NIMBUS_POSTGRES:
     process.env.NIMBUS_POSTGRES ||
     "postgres://nimbus@127.0.0.1:55432/nimbus?sslmode=disable",
