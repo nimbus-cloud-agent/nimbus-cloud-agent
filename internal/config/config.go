@@ -9,7 +9,18 @@ import (
 	"github.com/spf13/viper"
 )
 
-type Config struct{ Addr, Postgres, RuntimeCommand, WorkDir, DeepSeekKey, E2BKey, E2BTemplate string }
+type Config struct {
+	Addr, Postgres, RuntimeCommand, WorkDir, DeepSeekKey, E2BKey, E2BTemplate string
+	// PublicHost, when set, is the single public hostname allowed to reach
+	// the control plane (e.g. nimbus-dev.up.railway.app). It opts the server
+	// out of the default loopback-only binding and Host guard. Empty keeps
+	// the historical local-only behaviour.
+	PublicHost string
+	// BasicUser and BasicPass, when both set, gate every route except
+	// /api/health behind HTTP Basic Auth. This is the dev-deployment auth
+	// gate; production deployments should use a stronger identity layer.
+	BasicUser, BasicPass string
+}
 
 func Command(run func(Config) error) *cobra.Command {
 	v := viper.New()
@@ -26,6 +37,9 @@ func Command(run func(Config) error) *cobra.Command {
 	f.String("deepseek-api-key", "", "DeepSeek API key")
 	f.String("e2b-api-key", "", "E2B API key (required)")
 	f.String("e2b-template", "base", "E2B sandbox template")
+	f.String("public-host", "", "Public hostname allowed to reach the server (empty = loopback only)")
+	f.String("basic-user", "", "Basic Auth username (both user and pass must be set to enable)")
+	f.String("basic-pass", "", "Basic Auth password")
 	_ = v.BindPFlags(f)
 	root.RunE = func(cmd *cobra.Command, args []string) error {
 		if p := v.GetString("config"); p != "" {
@@ -38,7 +52,7 @@ func Command(run func(Config) error) *cobra.Command {
 			v.AddConfigPath(".")
 			_ = v.ReadInConfig()
 		}
-		c := Config{Addr: v.GetString("addr"), Postgres: v.GetString("postgres"), RuntimeCommand: v.GetString("runtime-command"), WorkDir: v.GetString("work-dir"), DeepSeekKey: v.GetString("deepseek-api-key"), E2BKey: v.GetString("e2b-api-key"), E2BTemplate: v.GetString("e2b-template")}
+		c := Config{Addr: v.GetString("addr"), Postgres: v.GetString("postgres"), RuntimeCommand: v.GetString("runtime-command"), WorkDir: v.GetString("work-dir"), DeepSeekKey: v.GetString("deepseek-api-key"), E2BKey: v.GetString("e2b-api-key"), E2BTemplate: v.GetString("e2b-template"), PublicHost: v.GetString("public-host"), BasicUser: v.GetString("basic-user"), BasicPass: v.GetString("basic-pass")}
 		if c.Postgres == "" {
 			return fmt.Errorf("--postgres or NIMBUS_POSTGRES is required")
 		}

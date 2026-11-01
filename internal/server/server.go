@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -51,8 +52,14 @@ type Server struct {
 
 func New(c config.Config, st *store.Store, frontend fs.FS, runtime *executor.Runtime, sandboxes sandbox.Service) (*Server, error) {
 	host, _, e := net.SplitHostPort(c.Addr)
-	if e != nil || !(host == "localhost" || net.ParseIP(host) != nil && net.ParseIP(host).IsLoopback()) {
-		return nil, fmt.Errorf("single-user control plane must bind loopback (127.0.0.1:8080)")
+	if e != nil {
+		return nil, fmt.Errorf("invalid listen address: %w", e)
+	}
+	// Default stays loopback-only. Setting --public-host opts a deployment
+	// (e.g. the Railway dev service) into public binding, where the Host
+	// guard below only accepts that hostname plus loopback.
+	if c.PublicHost == "" && !(host == "localhost" || net.ParseIP(host) != nil && net.ParseIP(host).IsLoopback()) {
+		return nil, fmt.Errorf("single-user control plane must bind loopback (127.0.0.1:8080) unless --public-host is set")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Server{C: c, S: st, R: runtime, Sandboxes: sandboxes, running: map[string]*runningTurn{}, ctx: ctx, cancel: cancel, BaseURL: "http://" + c.Addr}
@@ -64,7 +71,7 @@ func New(c config.Config, st *store.Store, frontend fs.FS, runtime *executor.Run
 	s.startChanges()
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
-	r.Use(gin.Recovery(), s.guard)
+	r.Use(gin.Recovery(), s.basicAuth, s.guard)
 	r.GET("/api/health", func(c *gin.Context) { c.JSON(200, gin.H{"ok": true, "runtime": s.R.Status()}) })
 	s.routes(r)
 	r.NoRoute(func(c *gin.Context) {
@@ -93,12 +100,37 @@ func New(c config.Config, st *store.Store, frontend fs.FS, runtime *executor.Run
 	go s.reaper()
 	return s, nil
 }
+// basicAuth gates every route except /api/health when both BasicUser and
+// BasicPass are configured. A half-configured pair (only one set) is treated
+// as disabled, so a typo cannot silently leave the server open with a
+// username-only check, nor lock it with a password-only check.
+func (s *Server) basicAuth(c *gin.Context) {
+	if s.C.BasicUser == "" || s.C.BasicPass == "" {
+		c.Next()
+		return
+	}
+	if c.Request.URL.Path == "/api/health" {
+		c.Next()
+		return
+	}
+	user, pass, ok := c.Request.BasicAuth()
+	if !ok || subtle.ConstantTimeCompare([]byte(user), []byte(s.C.BasicUser)) != 1 ||
+		subtle.ConstantTimeCompare([]byte(pass), []byte(s.C.BasicPass)) != 1 {
+		c.Header("WWW-Authenticate", `Basic realm="Nimbus"`)
+		c.AbortWithStatusJSON(401, gin.H{"error": "unauthorized"})
+		return
+	}
+	c.Next()
+}
+
 func (s *Server) guard(c *gin.Context) {
 	host, _, _ := net.SplitHostPort(c.Request.Host)
 	if host == "" {
 		host = c.Request.Host
 	}
-	if host != "localhost" && host != "127.0.0.1" && host != "::1" {
+	allowed := host == "localhost" || host == "127.0.0.1" || host == "::1" ||
+		(s.C.PublicHost != "" && host == s.C.PublicHost)
+	if !allowed {
 		c.AbortWithStatusJSON(403, gin.H{"error": "invalid Host"})
 		return
 	}
