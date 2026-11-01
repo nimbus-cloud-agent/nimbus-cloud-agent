@@ -79,6 +79,7 @@ func New(c config.Config, st *store.Store, frontend fs.FS, runtime *executor.Run
 		baseURL = "https://" + c.PublicHost
 	}
 	s := &Server{C: c, S: st, R: runtime, Sandboxes: sandboxes, running: map[string]*runningTurn{}, ctx: ctx, cancel: cancel, BaseURL: baseURL, drained: make(chan struct{})}
+	logging.RegisterSecrets(st.Get("deepseek_api_key", c.DeepSeekKey))
 	if e := st.RecoverInterrupted(ctx); e != nil {
 		cancel()
 		return nil, e
@@ -173,12 +174,7 @@ func (s *Server) guard(c *gin.Context) {
 	c.Next()
 }
 func (s *Server) redact(msg string) string {
-	for _, key := range []string{s.C.E2BKey, s.C.DeepSeekKey, s.S.Get("deepseek_api_key", "")} {
-		if key != "" {
-			msg = strings.ReplaceAll(msg, key, "[REDACTED]")
-		}
-	}
-	return msg
+	return logging.Sanitize(msg, s.C.E2BKey, s.C.DeepSeekKey)
 }
 func (s *Server) fail(c *gin.Context, status int, e error) {
 	message := s.redact(e.Error())

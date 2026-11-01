@@ -49,3 +49,15 @@ Render starts the next instance before retiring the current one. Nimbus remains 
 The retiring instance keeps its health endpoint alive with `draining: true` until Render sends SIGTERM, preventing a restart loop. Business requests briefly return 503 with `Retry-After: 2` during the handoff; this is not a guarantee of uninterrupted requests. If the successor releases ownership before Render retires the previous instance, the previous instance can reacquire it and resume serving. A standby probe never asks a healthy successor to give ownership back. The owner also stops serving if its lock connection is lost.
 
 Both versions must understand the handoff protocol. When upgrading from an older binary that reports `database is already owned by another Nimbus process`, stop that legacy instance once before starting the first handoff-enabled image. Subsequent image deploys and environment redeploys use the automatic handoff. The standalone local default continues to reject a second process.
+
+## Pausing this environment
+
+Set the GitHub repository variable `RENDER_DEPLOY_ENABLED=false` to keep pushes running CI tests without publishing or deploying the dev image. Suspend the web service first, then suspend PostgreSQL in Render. Suspension preserves the database; it does not delete conversations.
+
+To resume, restore PostgreSQL before the web service. Set `RENDER_DEPLOY_ENABLED=true` (or remove the variable) and rerun CI on the latest `dev` commit to publish and deploy the current code.
+
+## Log safety
+
+All Go business and framework diagnostics use slog. GORM emits timings, row counts and SQLSTATE without SQL text, bound parameters or PostgreSQL DETAIL. JSON-RPC emits protocol errors without message bodies. Runtime exits include exit status, generation, uptime and a bounded stderr exception classification; arbitrary running-child stderr is never dumped into logs.
+
+The shared handler strips URL user information, query strings and fragments, recursively sanitizes structured fields, and redacts configured credentials and sensitive field names. Credentials updated through Settings join the same redactor. Panic and terminal failures retain the request identity and a sanitized reason; normal terminal closure is DEBUG. Turn completion is logged after the final persistence transaction commits; finalization failure emits ERROR instead.

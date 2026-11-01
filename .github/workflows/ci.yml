@@ -40,7 +40,7 @@ jobs:
           test -z "$(git ls-files internal/runtimeprotocol/generated runtime/src/generated runtime/dist runtime/test-dist release)"
 
   deploy-render:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev' && vars.RENDER_DEPLOY_ENABLED != 'false'
     needs: test
     runs-on: ubuntu-latest
     permissions:

@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/executor"
+	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/logging"
 	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/model"
 	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/store"
 )
@@ -21,6 +22,9 @@ func (s *Server) scheduler() {
 	for range updates.signals(s.ctx, 0) {
 		queue, err := s.outboxes(s.ctx, store.OutboxFilter{Status: "queued"})
 		if err != nil {
+			if s.ctx.Err() == nil {
+				slog.WarnContext(s.ctx, "queued turns read failed; retrying", "error", logging.Sanitize(err.Error()))
+			}
 			// Retry only failed reads. A healthy idle scheduler performs no queries.
 			timer := time.NewTimer(time.Second)
 			select {
@@ -70,54 +74,32 @@ func (s *Server) scheduler() {
 	}
 }
 func (s *Server) runTurn(ctx context.Context, o model.Outbox) (started bool) {
+	log := logging.FromContext(ctx).With("session_id", o.SessionID, "turn_id", o.TurnID)
 	sess, err := s.getSession(ctx, o.SessionID)
 	if err != nil {
+		log.Log(ctx, turnErrorLevel(ctx), "turn session read failed", "error", logging.Sanitize(err.Error()))
 		return
 	}
 	if err = s.S.UpdateOutbox(ctx, o.ID, store.OutboxChanges{Status: ptr("starting"), Error: ptr("")}); err != nil {
+		log.Log(ctx, turnErrorLevel(ctx), "turn start persistence failed", "error", logging.Sanitize(err.Error()))
 		return
 	}
 	started = true
-	slog.DebugContext(ctx, "turn started", "session_id", o.SessionID, "turn_id", o.TurnID)
-	_ = s.S.UpdateSession(ctx, sess.ID, store.SessionChanges{AgentState: ptr("starting")})
+	log.DebugContext(ctx, "turn started")
 	outcome := "completed"
 	var turnErr error
 	defer func() {
-		cleanup := context.WithoutCancel(ctx)
 		if ctx.Err() != nil || errors.Is(turnErr, executor.ErrRuntimeLost) {
 			outcome = "interrupted"
 		}
 		if turnErr != nil && outcome != "interrupted" {
 			outcome = "error"
 		}
-		current, err := s.getOutbox(cleanup, o.ID, o.SessionID)
-		if err != nil {
-			return
-		}
-		changes := store.OutboxChanges{Outcome: &outcome}
-		if current.Status != "delivered" {
-			changes.Status = ptr("failed")
-			if turnErr == nil {
-				turnErr = fmt.Errorf("本轮未能送达 Harness")
-			}
-		}
-		if turnErr != nil {
-			changes.Error = ptr(s.redact(turnErr.Error()))
-			level := slog.LevelError
-			if outcome == "interrupted" {
-				level = slog.LevelInfo
-			}
-			slog.Log(ctx, level, "turn ended with error", "session_id", o.SessionID, "turn_id", o.TurnID, "outcome", outcome, "error", *changes.Error)
-		} else {
-			slog.DebugContext(ctx, "turn completed", "session_id", o.SessionID, "turn_id", o.TurnID, "outcome", outcome)
-		}
-		_ = s.S.Transaction(cleanup, func(tx *store.Store) error {
-			if err := tx.UpdateOutbox(cleanup, o.ID, changes); err != nil {
-				return err
-			}
-			return tx.UpdateSession(cleanup, sess.ID, store.SessionChanges{AgentState: ptr("idle"), LastActiveAt: ptr(time.Now())})
-		})
+		_ = s.finishTurn(ctx, o, outcome, turnErr)
 	}()
+	if turnErr = s.S.UpdateSession(ctx, sess.ID, store.SessionChanges{AgentState: ptr("starting")}); turnErr != nil {
+		return
+	}
 
 	if sess.LockedMode == nil {
 		turnErr = fmt.Errorf("session preset was not initialized")
@@ -180,6 +162,7 @@ func (s *Server) runTurn(ctx context.Context, o model.Outbox) (started bool) {
 		attachments = append(attachments, model.Attachment{Ref: img.Ref, Data: img.Data})
 	}
 	input := executor.TurnInput{SessionID: o.SessionID, TurnID: o.TurnID, MessageID: o.ClientMsgID, Message: o.Content, SessionMode: *sess.LockedMode, Options: o.Options, Header: sess.Header, Records: records, WorkDir: dir, APIKey: s.S.Get("deepseek_api_key", s.C.DeepSeekKey), Skills: skills, MCP: s.mcpTools(ctx, mcps), Images: o.Images, Attachments: attachments, Recovery: recovery}
+	logging.RegisterSecrets(input.APIKey)
 	turnErr = s.R.Turn(ctx, input, func(event model.TurnEvent) error {
 		// Native cancellation may flush history after the original request context has
 		// been cancelled. Its durable acknowledgements still finish before scope exit.

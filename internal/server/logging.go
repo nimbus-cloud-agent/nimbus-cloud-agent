@@ -43,10 +43,20 @@ func recoveryLogger() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		defer func() {
 			if recovered := recover(); recovered != nil {
-				slog.Error("http handler panic",
+				var reason string
+				switch value := recovered.(type) {
+				case error:
+					reason = value.Error()
+				case string:
+					reason = value
+				default:
+					reason = "panic with non-error value"
+				}
+				logging.FromContext(c.Request.Context()).ErrorContext(c.Request.Context(), "http handler panic",
 					"method", c.Request.Method,
 					"path", c.Request.URL.Path,
 					"panic_type", fmt.Sprintf("%T", recovered),
+					"error", logging.Sanitize(reason),
 					"stack", string(debug.Stack()),
 				)
 				c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})

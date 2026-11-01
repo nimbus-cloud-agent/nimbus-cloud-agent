@@ -21,7 +21,9 @@ import (
 )
 
 func main() {
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
+	slog.SetDefault(slog.New(logging.NewHandler(os.Stdout, slog.LevelInfo,
+		os.Getenv("NIMBUS_E2B_API_KEY"), os.Getenv("NIMBUS_DEEPSEEK_API_KEY"),
+		os.Getenv("NIMBUS_BASIC_PASS"), os.Getenv("NIMBUS_POSTGRES"))))
 	cmd := config.Command(func(c config.Config) error {
 		if err := logging.Configure(c.LogLevel, c.E2BKey, c.DeepSeekKey, c.BasicPass, c.Postgres); err != nil {
 			return err

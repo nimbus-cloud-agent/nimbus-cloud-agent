@@ -13,6 +13,7 @@ import (
 	"time"
 
 	e2b "github.com/matiasinsaurralde/go-e2b"
+	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/logging"
 	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/model"
 )
 
@@ -46,7 +47,7 @@ func newClient(key, apiURL string, httpClient *http.Client) (*Client, error) {
 	httpClient = &observed
 	sdk, err := e2b.NewClient(e2b.ClientConfig{APIKey: key, APIBaseURL: apiURL, HTTPClient: httpClient})
 	if err != nil {
-		return nil, fmt.Errorf("initialize E2B client: %s", strings.ReplaceAll(err.Error(), key, "[REDACTED]"))
+		return nil, fmt.Errorf("initialize E2B client: %s", logging.Sanitize(err.Error(), key))
 	}
 	return &Client{sdk: sdk, key: key, apiURL: apiURL, http: httpClient}, nil
 }
@@ -60,11 +61,7 @@ func (c *Client) failure(ctx context.Context, err error) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	message := err.Error()
-	if c.key != "" {
-		message = strings.ReplaceAll(message, c.key, "[REDACTED]")
-	}
-	return errors.New(message)
+	return errors.New(logging.Sanitize(err.Error(), c.key))
 }
 
 // The SDK only exposes Info/Pause/Kill on a connected handle. These small

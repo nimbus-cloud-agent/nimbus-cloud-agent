@@ -6,9 +6,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net/url"
 	"os"
-	"strings"
+	"sync/atomic"
 )
 
 func Configure(level string, secrets ...string) error {
@@ -16,40 +15,33 @@ func Configure(level string, secrets ...string) error {
 	if err := parsed.UnmarshalText([]byte(level)); err != nil {
 		return fmt.Errorf("invalid log level %q: %w", level, err)
 	}
-	slog.SetDefault(slog.New(NewHandler(os.Stdout, parsed, secrets...)))
+	redactor := newRedactor(secrets...)
+	configuredRedactor.Store(redactor)
+	slog.SetDefault(slog.New(newHandler(os.Stdout, parsed, redactor)))
 	return nil
 }
 
 func NewHandler(w io.Writer, level slog.Level, secrets ...string) slog.Handler {
-	values := append([]string(nil), secrets...)
-	for _, secret := range secrets {
-		if u, err := url.Parse(secret); err == nil && u.User != nil {
-			if password, ok := u.User.Password(); ok && password != "" {
-				values = append(values, password)
-			}
-		}
+	return newHandler(w, level, newRedactor(secrets...))
+}
+
+var configuredRedactor atomic.Pointer[redactor]
+
+// RegisterSecrets includes credentials updated in Settings without querying the
+// database from the logging or panic-recovery path.
+func RegisterSecrets(secrets ...string) {
+	if r := configuredRedactor.Load(); r != nil {
+		r.add(secrets...)
 	}
+}
+
+func newHandler(w io.Writer, level slog.Level, r *redactor) slog.Handler {
 	return slog.NewJSONHandler(w, &slog.HandlerOptions{Level: level, ReplaceAttr: func(_ []string, a slog.Attr) slog.Attr {
-		v := a.Value.Resolve()
-		var text string
-		switch v.Kind() {
-		case slog.KindString:
-			text = v.String()
-		case slog.KindAny:
-			err, ok := v.Any().(error)
-			if !ok {
-				return a
-			}
-			text = err.Error()
-		default:
+		if sensitiveKey(a.Key) {
+			a.Value = slog.StringValue("[REDACTED]")
 			return a
 		}
-		for _, secret := range values {
-			if secret != "" {
-				text = strings.ReplaceAll(text, secret, "[REDACTED]")
-			}
-		}
-		a.Value = slog.StringValue(text)
+		a.Value = r.value(a.Value.Resolve())
 		return a
 	}})
 }
@@ -65,4 +57,8 @@ func FromContext(ctx context.Context) *slog.Logger {
 
 func WithAttrs(ctx context.Context, attrs ...any) context.Context {
 	return context.WithValue(ctx, contextKey{}, FromContext(ctx).With(attrs...))
+}
+
+func WithLogger(ctx context.Context, logger *slog.Logger) context.Context {
+	return context.WithValue(ctx, contextKey{}, logger)
 }

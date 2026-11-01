@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -30,21 +31,20 @@ type connection struct {
 
 const maxRuntimeDiagnosticBytes = 4096
 
-// runtimeDiagnostics retains only a bounded stderr tail for the initial
-// protocol check. Runtime stderr is never logged during normal operation.
+// Retain a bounded stderr tail. Only startup preflight may return raw text;
+// runtime crashes emit counts and exception categories, never arbitrary stderr
+// that may contain a model prompt, command output or credentials.
 type runtimeDiagnostics struct {
-	mu     sync.Mutex
-	data   []byte
-	active bool
+	mu    sync.Mutex
+	data  []byte
+	bytes int64
 }
 
 func (d *runtimeDiagnostics) Write(p []byte) (int, error) {
 	n := len(p)
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if !d.active {
-		return n, nil
-	}
+	d.bytes += int64(n)
 	if len(p) >= maxRuntimeDiagnosticBytes {
 		d.data = append(d.data[:0], p[len(p)-maxRuntimeDiagnosticBytes:]...)
 		return n, nil
@@ -66,8 +66,29 @@ func (d *runtimeDiagnostics) String() string {
 func (d *runtimeDiagnostics) Reset() {
 	d.mu.Lock()
 	d.data = nil
-	d.active = false
+	d.bytes = 0
 	d.mu.Unlock()
+}
+
+var nodeErrorCode = regexp.MustCompile(`(?m)^Error \[(ERR_[A-Z0-9_]{1,64})\]:`)
+var nodeErrorType = regexp.MustCompile(`(?m)^(TypeError|SyntaxError|RangeError|ReferenceError|URIError|EvalError|Error):`)
+
+func (d *runtimeDiagnostics) attrs() []any {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	var kind []byte
+	if match := nodeErrorCode.FindSubmatch(d.data); len(match) > 1 {
+		kind = match[1]
+	}
+	if len(kind) == 0 {
+		if match := nodeErrorType.FindSubmatch(d.data); len(match) > 1 {
+			kind = match[1]
+		}
+	}
+	if strings.Contains(string(d.data), "heap out of memory") {
+		kind = []byte("out_of_memory")
+	}
+	return []any{"stderr_bytes", d.bytes, "stderr_truncated", d.bytes > int64(len(d.data)), "stderr_kind", string(kind)}
 }
 
 type pipes struct {
@@ -123,16 +144,18 @@ func (r *Runtime) supervise() {
 	for r.ctx.Err() == nil {
 		started := time.Now()
 		cmd := exec.Command(r.command)
-		diagnostics := &runtimeDiagnostics{active: true}
+		diagnostics := &runtimeDiagnostics{}
 		cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME"), "LANG=en_US.UTF-8", "NODE_NO_WARNINGS=1"}
 		cmd.Stderr = diagnostics
 		in, err := cmd.StdinPipe()
 		if err != nil {
+			slog.Error("agent runtime stdin pipe failed", "error", err)
 			return
 		}
 		out, err := cmd.StdoutPipe()
 		if err != nil {
 			in.Close()
+			slog.Error("agent runtime stdout pipe failed", "error", err)
 			return
 		}
 		if err = cmd.Start(); err == nil {
@@ -145,10 +168,11 @@ func (r *Runtime) supervise() {
 			r.mu.Lock()
 			r.current = c
 			r.generation++
+			generation := r.generation
 			close(r.changed)
 			r.changed = make(chan struct{})
 			r.mu.Unlock()
-			slog.Info("agent runtime started", "pid", cmd.Process.Pid)
+			slog.Info("agent runtime started", "pid", cmd.Process.Pid, "generation", generation)
 			go func() {
 				select {
 				case <-r.ctx.Done():
@@ -171,9 +195,13 @@ func (r *Runtime) supervise() {
 			r.mu.Unlock()
 			_ = in.Close()
 			_ = cmd.Process.Kill()
-			_ = cmd.Wait()
+			waitErr := cmd.Wait()
 			if r.ctx.Err() == nil {
-				slog.Warn("agent runtime disconnected; restarting", "pid", cmd.Process.Pid)
+				attrs := []any{"pid", cmd.Process.Pid, "generation", generation, "uptime_ms", time.Since(started).Milliseconds(), "error", waitErr}
+				if cmd.ProcessState != nil {
+					attrs = append(attrs, "exit_code", cmd.ProcessState.ExitCode(), "exit_reason", cmd.ProcessState.String())
+				}
+				slog.Warn("agent runtime disconnected; restarting", append(attrs, diagnostics.attrs()...)...)
 			}
 		} else {
 			in.Close()

@@ -9,7 +9,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptrace"
-	"strings"
 	"time"
 
 	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/logging"
@@ -65,7 +64,7 @@ func (t *diagnosticTransport) safeError(err error) string {
 	if err == nil {
 		return ""
 	}
-	return strings.ReplaceAll(err.Error(), t.key, "[REDACTED]")
+	return logging.Sanitize(err.Error(), t.key)
 }
 
 func networkErrorKind(err error) string {

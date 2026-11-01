@@ -39,7 +39,7 @@ func TryOpenWithHandoff(ctx context.Context, dsn string) (*Store, error) {
 }
 
 func open(ctx context.Context, dsn string, handoff, wait bool) (*Store, error) {
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent), DisableAutomaticPing: true})
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{Logger: databaseLogger{level: logger.Info}, DisableAutomaticPing: true})
 	if err != nil {
 		return nil, err
 	}
