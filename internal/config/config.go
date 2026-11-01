@@ -12,7 +12,7 @@ import (
 type Config struct {
 	Addr, Postgres, RuntimeCommand, WorkDir, DeepSeekKey, E2BKey, E2BTemplate string
 	// PublicHost, when set, is the single public hostname allowed to reach
-	// the control plane (e.g. nimbus-dev.up.railway.app). It opts the server
+	// the control plane (e.g. nimbus-dev.onrender.com). It opts the server
 	// out of the default loopback-only binding and Host guard. Empty keeps
 	// the historical local-only behaviour.
 	PublicHost string
@@ -27,7 +27,7 @@ func Command(run func(Config) error) *cobra.Command {
 	v.SetEnvPrefix("NIMBUS")
 	v.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
 	v.AutomaticEnv()
-	root := &cobra.Command{Use: "nimbus", Short: "Nimbus — DeepSeek agents in E2B cloud sandboxes", SilenceUsage: true}
+	root := &cobra.Command{Use: "nimbus", Short: "Nimbus — DeepSeek agents in E2B cloud sandboxes", SilenceUsage: true, SilenceErrors: true}
 	f := root.PersistentFlags()
 	f.String("config", "", "Configuration file")
 	f.String("addr", "127.0.0.1:8080", "Local HTTP listen address")

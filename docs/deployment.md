@@ -140,8 +140,11 @@ Precedence is **CLI flags → `NIMBUS_` environment variables → configuration 
 | `NIMBUS_DEEPSEEK_API_KEY` | `--deepseek-api-key` | Optional if configured through Settings |
 | `NIMBUS_E2B_TEMPLATE` | `--e2b-template` | `base` |
 | `NIMBUS_WORK_DIR` | `--work-dir` | `.local/turns`; per-turn Harness working copies |
+| `NIMBUS_PUBLIC_HOST` | `--public-host` | Empty; set to the allowed public hostname to enable non-loopback binding |
+| `NIMBUS_BASIC_USER` | `--basic-user` | Empty; set together with `NIMBUS_BASIC_PASS` to enable HTTP Basic Auth |
+| `NIMBUS_BASIC_PASS` | `--basic-pass` | Empty; set together with `NIMBUS_BASIC_USER` to enable HTTP Basic Auth |
 
-Prefer environment variables over credential-bearing CLI flags. The Go server enforces loopback access and same-origin requests. This project currently has no public hosting, login, multi-user authentication, or multi-instance scheduler.
+Prefer environment variables over credential-bearing CLI flags. The Go server enforces loopback access and same-origin requests. The [Render deployment guide](deployment-render.md) documents the public single-user deployment; set both Basic Auth variables there. Nimbus does not provide multi-user authentication or a multi-instance scheduler.
 
 ## Check that it is running
 

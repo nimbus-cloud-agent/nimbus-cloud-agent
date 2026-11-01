@@ -1,7 +1,7 @@
 name: CI
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
 permissions:
   contents: read
@@ -38,3 +38,67 @@ jobs:
       - name: Verify generated outputs are not tracked
         run: |
           test -z "$(git ls-files internal/runtimeprotocol/generated runtime/src/generated runtime/dist runtime/test-dist release)"
+
+  deploy-render:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    concurrency:
+      group: render-dev-deploy
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v4
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and publish Render image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ghcr.io/nimbus-cloud-agent/nimbus-cloud-agent:dev
+            ghcr.io/nimbus-cloud-agent/nimbus-cloud-agent:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/nimbus-cloud-agent/nimbus-cloud-agent
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Trigger Render deploy
+        env:
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+          IMAGE_URL: ghcr.io/nimbus-cloud-agent/nimbus-cloud-agent:${{ github.sha }}
+        run: |
+          if [ -z "$RENDER_DEPLOY_HOOK_URL" ]; then
+            echo "::warning::Set the RENDER_DEPLOY_HOOK_URL repository secret to enable automatic Render deploys."
+            exit 0
+          fi
+          python3 - <<'PY'
+          import os
+          from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+          from urllib.error import HTTPError, URLError
+          from urllib.request import Request, urlopen
+
+          hook = urlsplit(os.environ["RENDER_DEPLOY_HOOK_URL"])
+          query = parse_qsl(hook.query, keep_blank_values=True)
+          query.append(("imgURL", os.environ["IMAGE_URL"]))
+          url = urlunsplit((hook.scheme, hook.netloc, hook.path, urlencode(query), hook.fragment))
+          request = Request(url, method="POST")
+          try:
+              with urlopen(request, timeout=30) as response:
+                  if response.status != 200:
+                      raise SystemExit(f"Render deploy hook returned HTTP {response.status}")
+                  print("Render deploy triggered")
+          except HTTPError as error:
+              raise SystemExit(f"Render deploy hook returned HTTP {error.code}") from None
+          except URLError:
+              raise SystemExit("Render deploy hook request failed") from None
+          PY

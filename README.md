@@ -65,7 +65,7 @@ For Linux, an existing PostgreSQL server, separate release artifacts, configurat
 3. Expand the tool calls to see what ran. In the terminal, run `ls -lh /workspace` and inspect the files.
 4. Enable Plan for a new task to review its proposed steps before continuing.
 
-DeepSeek and E2B requests use your own accounts and may incur usage charges. Nimbus is a single-user application bound to loopback; it does not include public hosting or multi-user authentication.
+DeepSeek and E2B requests use your own accounts and may incur usage charges. Nimbus is a single-user application. The [Render deployment guide](docs/deployment-render.md) covers its public image deployment and Basic Auth setup; it does not include multi-user authentication.
 
 ### Daily use
 
@@ -116,6 +116,7 @@ Tests use disposable schemas. Real model, sandbox, browser, and crash-recovery c
 | Guide | Contents |
 | --- | --- |
 | [Local deployment](docs/deployment.md) | macOS setup, Linux/existing PostgreSQL, configuration, updates, backups, troubleshooting |
+| [Render deployment](docs/deployment-render.md) | `dev` branch image CI, Render setup, environment variables, and logs |
 | [Packaging](docs/packaging.md) | Build and install the Go executable and runtime npm package separately |
 | [Architecture](ARCHITECTURE.md) | Process boundaries, typed models, sandbox ownership, persistence, and streaming |
 | [HTTP API](docs/API.md) | Sessions, images, Plan review, event streams, and terminal WebSockets |

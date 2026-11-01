@@ -2,8 +2,8 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -18,6 +18,7 @@ import (
 )
 
 func main() {
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 	cmd := config.Command(func(c config.Config) error {
 		runtime := executor.New(c.RuntimeCommand)
 		defer runtime.Close()
@@ -42,7 +43,7 @@ func main() {
 		}
 		err := make(chan error, 1)
 		go func() { err <- srv.HTTP.ListenAndServe() }()
-		fmt.Printf("Nimbus ready at http://%s\n", c.Addr)
+		slog.Info("Nimbus ready", "addr", c.Addr)
 		sig := make(chan os.Signal, 1)
 		signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 		select {
@@ -55,6 +56,7 @@ func main() {
 		}
 	})
 	if e := cmd.Execute(); e != nil {
+		slog.Error("command failed", "error", e)
 		os.Exit(1)
 	}
 }

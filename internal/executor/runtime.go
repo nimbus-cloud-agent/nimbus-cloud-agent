@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"log"
+	"log/slog"
 	"os"
 	"os/exec"
 	"sync"
@@ -103,7 +103,7 @@ func (r *Runtime) supervise() {
 			close(r.changed)
 			r.changed = make(chan struct{})
 			r.mu.Unlock()
-			log.Printf("Agent runtime started: pid=%d", cmd.Process.Pid)
+			slog.Info("agent runtime started", "pid", cmd.Process.Pid)
 			go func() {
 				select {
 				case <-r.ctx.Done():
@@ -128,12 +128,12 @@ func (r *Runtime) supervise() {
 			_ = cmd.Process.Kill()
 			_ = cmd.Wait()
 			if r.ctx.Err() == nil {
-				log.Printf("Agent runtime disconnected: pid=%d; restarting", cmd.Process.Pid)
+				slog.Warn("agent runtime disconnected; restarting", "pid", cmd.Process.Pid)
 			}
 		} else {
 			in.Close()
 			out.Close()
-			log.Printf("Agent runtime could not start: %v; retrying", err)
+			slog.Error("agent runtime could not start; retrying", "error", err)
 		}
 		if time.Since(started) > 10*time.Second {
 			backoff = 250 * time.Millisecond

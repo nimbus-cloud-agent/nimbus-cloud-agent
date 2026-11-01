@@ -8,7 +8,7 @@
 # Run:    docker run -e NIMBUS_POSTGRES=... -e NIMBUS_E2B_API_KEY=... \
 #           -e NIMBUS_PUBLIC_HOST=... -e NIMBUS_BASIC_USER=... \
 #           -e NIMBUS_BASIC_PASS=... -p 8080:8080 nimbus-cloud-agent:dev
-# Railway sets $PORT at runtime; docker-entrypoint.sh maps it to NIMBUS_ADDR.
+# Render sets $PORT at runtime; docker-entrypoint.sh maps it to NIMBUS_ADDR.
 
 FROM golang:1.25-bookworm AS builder
 

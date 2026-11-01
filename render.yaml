@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: nimbus-dev
+    runtime: image
+    image:
+      url: ghcr.io/nimbus-cloud-agent/nimbus-cloud-agent:dev
+    plan: free
+    region: singapore
+    healthCheckPath: /api/health
+    envVars:
+      - key: NIMBUS_POSTGRES
+        fromDatabase:
+          name: nimbus-postgres
+          property: connectionString
+      - key: NIMBUS_E2B_API_KEY
+        sync: false
+      - key: NIMBUS_DEEPSEEK_API_KEY
+        sync: false
+      - key: NIMBUS_BASIC_USER
+        sync: false
+      - key: NIMBUS_BASIC_PASS
+        sync: false
+      - key: NIMBUS_PUBLIC_HOST
+        fromService:
+          type: web
+          name: nimbus-dev
+          envVarKey: RENDER_EXTERNAL_HOSTNAME

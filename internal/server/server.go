@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -56,13 +57,17 @@ func New(c config.Config, st *store.Store, frontend fs.FS, runtime *executor.Run
 		return nil, fmt.Errorf("invalid listen address: %w", e)
 	}
 	// Default stays loopback-only. Setting --public-host opts a deployment
-	// (e.g. the Railway dev service) into public binding, where the Host
+	// (e.g. the Render dev service) into public binding, where the Host
 	// guard below only accepts that hostname plus loopback.
 	if c.PublicHost == "" && !(host == "localhost" || net.ParseIP(host) != nil && net.ParseIP(host).IsLoopback()) {
 		return nil, fmt.Errorf("single-user control plane must bind loopback (127.0.0.1:8080) unless --public-host is set")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	s := &Server{C: c, S: st, R: runtime, Sandboxes: sandboxes, running: map[string]*runningTurn{}, ctx: ctx, cancel: cancel, BaseURL: "http://" + c.Addr}
+	baseURL := "http://" + c.Addr
+	if c.PublicHost != "" {
+		baseURL = "https://" + c.PublicHost
+	}
+	s := &Server{C: c, S: st, R: runtime, Sandboxes: sandboxes, running: map[string]*runningTurn{}, ctx: ctx, cancel: cancel, BaseURL: baseURL}
 	if e = st.RecoverInterrupted(ctx); e != nil {
 		cancel()
 		return nil, e
@@ -71,7 +76,7 @@ func New(c config.Config, st *store.Store, frontend fs.FS, runtime *executor.Run
 	s.startChanges()
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
-	r.Use(gin.Recovery(), s.basicAuth, s.guard)
+	r.Use(requestLogger(), recoveryLogger(), s.basicAuth, s.guard)
 	r.GET("/api/health", func(c *gin.Context) { c.JSON(200, gin.H{"ok": true, "runtime": s.R.Status()}) })
 	s.routes(r)
 	r.NoRoute(func(c *gin.Context) {
@@ -93,13 +98,14 @@ func New(c config.Config, st *store.Store, frontend fs.FS, runtime *executor.Run
 		}
 		http.FileServer(http.FS(frontend)).ServeHTTP(c.Writer, c.Request)
 	})
-	s.HTTP = &http.Server{Addr: c.Addr, Handler: r, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 90 * time.Second, MaxHeaderBytes: 1 << 20}
+	s.HTTP = &http.Server{Addr: c.Addr, Handler: r, ErrorLog: slog.NewLogLogger(slog.Default().Handler(), slog.LevelError), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 90 * time.Second, MaxHeaderBytes: 1 << 20}
 	s.wg.Add(1)
 	go s.scheduler()
 	s.wg.Add(1)
 	go s.reaper()
 	return s, nil
 }
+
 // basicAuth gates every route except /api/health when both BasicUser and
 // BasicPass are configured. A half-configured pair (only one set) is treated
 // as disabled, so a typo cannot silently leave the server open with a

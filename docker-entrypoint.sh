@@ -1,5 +1,5 @@
 #!/bin/sh
-# Railway (and most PaaS hosts) inject $PORT at runtime. Nimbus reads its
+# Render injects $PORT at runtime. Nimbus reads its
 # listen address from NIMBUS_ADDR / --addr, so map $PORT here instead of
 # hard-coding a port in the Dockerfile. An explicit NIMBUS_ADDR wins.
 set -eu
