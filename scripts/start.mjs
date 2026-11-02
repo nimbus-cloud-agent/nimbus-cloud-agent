@@ -2,6 +2,19 @@ import { readFile, mkdir, writeFile } from "node:fs/promises";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 process.chdir(fileURLToPath(new URL("..", import.meta.url)));
+// Keep exported environment variables authoritative; local overrides precede
+// the shared file. Neon deploy writes .env, or .env.local when .env is absent.
+for (const file of [".env.local", ".env"]) {
+  try {
+    process.loadEnvFile(file);
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+}
+const databaseURL =
+  process.env.NIMBUS_POSTGRES ||
+  process.env.DATABASE_URL_UNPOOLED ||
+  process.env.DATABASE_URL;
 await mkdir(".local", { recursive: true });
 const pgPrefix =
   process.platform === "darwin"
@@ -10,7 +23,7 @@ const pgPrefix =
       }).stdout?.trim()
     : "";
 const pg = (pgPrefix || "/opt/homebrew/opt/postgresql@17") + "/bin/";
-if (process.platform === "darwin" && !process.env.NIMBUS_POSTGRES) {
+if (process.platform === "darwin" && !databaseURL) {
   const check = spawnSync(
     pg + "pg_isready",
     ["-h", "127.0.0.1", "-p", "55432"],
@@ -35,9 +48,9 @@ if (process.platform === "darwin" && !process.env.NIMBUS_POSTGRES) {
 }
 const env = {
   ...process.env,
+  NIMBUS_LOG_LEVEL: process.env.NIMBUS_LOG_LEVEL || "debug",
   NIMBUS_POSTGRES:
-    process.env.NIMBUS_POSTGRES ||
-    "postgres://nimbus@127.0.0.1:55432/nimbus?sslmode=disable",
+    databaseURL || "postgres://nimbus@127.0.0.1:55432/nimbus?sslmode=disable",
   NIMBUS_RUNTIME_COMMAND:
     process.env.NIMBUS_RUNTIME_COMMAND ||
     fileURLToPath(

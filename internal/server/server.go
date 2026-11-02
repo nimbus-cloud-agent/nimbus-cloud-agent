@@ -2,9 +2,11 @@ package server
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -16,6 +18,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/config"
 	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/executor"
+	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/logging"
 	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/model"
 	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/sandbox"
 	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/store"
@@ -44,19 +47,40 @@ type Server struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
 	wg            sync.WaitGroup
+	requests      sync.WaitGroup
+	drainOnce     sync.Once
+	drained       chan struct{}
 	capacity      sync.Mutex
 	updates       changeHub
 	BaseURL       string
 }
 
-func New(c config.Config, st *store.Store, frontend fs.FS, runtime *executor.Runtime, sandboxes sandbox.Service) (*Server, error) {
+func ValidateConfig(c config.Config) error {
 	host, _, e := net.SplitHostPort(c.Addr)
-	if e != nil || !(host == "localhost" || net.ParseIP(host) != nil && net.ParseIP(host).IsLoopback()) {
-		return nil, fmt.Errorf("single-user control plane must bind loopback (127.0.0.1:8080)")
+	if e != nil {
+		return fmt.Errorf("invalid listen address: %w", e)
+	}
+	// Default stays loopback-only. Setting --public-host opts a deployment
+	// (e.g. the Render dev service) into public binding, where the Host
+	// guard below only accepts that hostname plus loopback.
+	if c.PublicHost == "" && !(host == "localhost" || net.ParseIP(host) != nil && net.ParseIP(host).IsLoopback()) {
+		return fmt.Errorf("single-user control plane must bind loopback (127.0.0.1:8080) unless --public-host is set")
+	}
+	return nil
+}
+
+func New(c config.Config, st *store.Store, frontend fs.FS, runtime *executor.Runtime, sandboxes sandbox.Service) (*Server, error) {
+	if e := ValidateConfig(c); e != nil {
+		return nil, e
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	s := &Server{C: c, S: st, R: runtime, Sandboxes: sandboxes, running: map[string]*runningTurn{}, ctx: ctx, cancel: cancel, BaseURL: "http://" + c.Addr}
-	if e = st.RecoverInterrupted(ctx); e != nil {
+	baseURL := "http://" + c.Addr
+	if c.PublicHost != "" {
+		baseURL = "https://" + c.PublicHost
+	}
+	s := &Server{C: c, S: st, R: runtime, Sandboxes: sandboxes, running: map[string]*runningTurn{}, ctx: ctx, cancel: cancel, BaseURL: baseURL, drained: make(chan struct{})}
+	logging.RegisterSecrets(st.Get("deepseek_api_key", c.DeepSeekKey))
+	if e := st.RecoverInterrupted(ctx); e != nil {
 		cancel()
 		return nil, e
 	}
@@ -64,8 +88,10 @@ func New(c config.Config, st *store.Store, frontend fs.FS, runtime *executor.Run
 	s.startChanges()
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
-	r.Use(gin.Recovery(), s.guard)
-	r.GET("/api/health", func(c *gin.Context) { c.JSON(200, gin.H{"ok": true, "runtime": s.R.Status()}) })
+	r.Use(requestLogger(), recoveryLogger(), s.acceptRequest, s.basicAuth, s.guard)
+	r.GET("/api/health", func(c *gin.Context) {
+		c.JSON(200, gin.H{"ok": true, "runtime": s.R.Status(), "draining": s.ctx.Err() != nil})
+	})
 	s.routes(r)
 	r.NoRoute(func(c *gin.Context) {
 		if strings.HasPrefix(c.Request.URL.Path, "/api/") || strings.HasPrefix(c.Request.URL.Path, "/internal/") {
@@ -86,19 +112,45 @@ func New(c config.Config, st *store.Store, frontend fs.FS, runtime *executor.Run
 		}
 		http.FileServer(http.FS(frontend)).ServeHTTP(c.Writer, c.Request)
 	})
-	s.HTTP = &http.Server{Addr: c.Addr, Handler: r, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 90 * time.Second, MaxHeaderBytes: 1 << 20}
+	s.HTTP = &http.Server{Addr: c.Addr, Handler: r, ErrorLog: slog.NewLogLogger(slog.Default().Handler(), slog.LevelError), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 90 * time.Second, MaxHeaderBytes: 1 << 20, BaseContext: func(net.Listener) context.Context { return s.ctx }}
 	s.wg.Add(1)
 	go s.scheduler()
 	s.wg.Add(1)
 	go s.reaper()
 	return s, nil
 }
+
+// basicAuth gates every route except /api/health when both BasicUser and
+// BasicPass are configured. A half-configured pair (only one set) is treated
+// as disabled, so a typo cannot silently leave the server open with a
+// username-only check, nor lock it with a password-only check.
+func (s *Server) basicAuth(c *gin.Context) {
+	if s.C.BasicUser == "" || s.C.BasicPass == "" {
+		c.Next()
+		return
+	}
+	if c.Request.URL.Path == "/api/health" {
+		c.Next()
+		return
+	}
+	user, pass, ok := c.Request.BasicAuth()
+	if !ok || subtle.ConstantTimeCompare([]byte(user), []byte(s.C.BasicUser)) != 1 ||
+		subtle.ConstantTimeCompare([]byte(pass), []byte(s.C.BasicPass)) != 1 {
+		c.Header("WWW-Authenticate", `Basic realm="Nimbus"`)
+		c.AbortWithStatusJSON(401, gin.H{"error": "unauthorized"})
+		return
+	}
+	c.Next()
+}
+
 func (s *Server) guard(c *gin.Context) {
 	host, _, _ := net.SplitHostPort(c.Request.Host)
 	if host == "" {
 		host = c.Request.Host
 	}
-	if host != "localhost" && host != "127.0.0.1" && host != "::1" {
+	allowed := host == "localhost" || host == "127.0.0.1" || host == "::1" ||
+		(s.C.PublicHost != "" && host == s.C.PublicHost)
+	if !allowed {
 		c.AbortWithStatusJSON(403, gin.H{"error": "invalid Host"})
 		return
 	}
@@ -122,15 +174,16 @@ func (s *Server) guard(c *gin.Context) {
 	c.Next()
 }
 func (s *Server) redact(msg string) string {
-	for _, key := range []string{s.C.E2BKey, s.C.DeepSeekKey, s.S.Get("deepseek_api_key", "")} {
-		if key != "" {
-			msg = strings.ReplaceAll(msg, key, "[REDACTED]")
-		}
-	}
-	return msg
+	return logging.Sanitize(msg, s.C.E2BKey, s.C.DeepSeekKey)
 }
 func (s *Server) fail(c *gin.Context, status int, e error) {
-	c.JSON(status, gin.H{"error": s.redact(e.Error())})
+	message := s.redact(e.Error())
+	level := slog.LevelWarn
+	if status >= 500 {
+		level = slog.LevelError
+	}
+	logging.FromContext(c.Request.Context()).Log(c.Request.Context(), level, "http operation failed", "method", c.Request.Method, "path", c.Request.URL.Path, "status", status, "error", message)
+	c.JSON(status, gin.H{"error": message})
 }
 func (s *Server) session(c *gin.Context) (model.Session, bool) {
 	var sess model.Session
@@ -180,16 +233,53 @@ func (s *Server) lock(id string) *sync.Mutex {
 	x, _ := s.locks.LoadOrStore(id, &sync.Mutex{})
 	return x.(*sync.Mutex)
 }
-func (s *Server) Shutdown(ctx context.Context) error {
-	s.cancel()
-	s.updates.close()
-	s.mu.Lock()
-	for _, r := range s.running {
-		r.cancel()
+
+// During a handoff, keep health probes responding until Render retires this
+// instance. Business requests stop before ownership is released.
+func (s *Server) acceptRequest(c *gin.Context) {
+	if c.Request.URL.Path == "/api/health" {
+		c.Next()
+		return
 	}
+	s.mu.Lock()
+	if s.ctx.Err() != nil {
+		s.mu.Unlock()
+		c.Header("Retry-After", "2")
+		c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": "deployment handoff in progress; retry shortly"})
+		return
+	}
+	s.requests.Add(1)
 	s.mu.Unlock()
-	s.wg.Wait()
-	return s.HTTP.Shutdown(ctx)
+	defer s.requests.Done()
+	c.Next()
+}
+
+func (s *Server) Drain(ctx context.Context) error {
+	s.drainOnce.Do(func() {
+		s.cancel()
+		s.updates.close()
+		s.mu.Lock()
+		for _, r := range s.running {
+			r.cancel()
+		}
+		s.mu.Unlock()
+		go func() { s.wg.Wait(); s.requests.Wait(); close(s.drained) }()
+	})
+	select {
+	case <-s.drained:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (s *Server) Shutdown(ctx context.Context) error {
+	err := s.Drain(ctx)
+	shutdownErr := s.HTTP.Shutdown(ctx)
+	if shutdownErr != nil {
+		_ = s.HTTP.Close()
+	}
+	return errors.Join(err, shutdownErr)
 }
 func decode[T any](c *gin.Context) (T, error) { var x T; e := c.ShouldBindJSON(&x); return x, e }
 func validOptions(x model.Options) error {

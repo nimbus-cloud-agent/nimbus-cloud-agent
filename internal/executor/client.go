@@ -71,10 +71,20 @@ func (r *Runtime) Check(ctx context.Context) error {
 		return err
 	}
 	info, err := c.client.Check(ctx, generated.CheckRequest{ProtocolVersion: 3})
-	if err == nil && (info.ProtocolVersion != 3 || info.Name != "nimbus-agent-runtime") {
+	if err != nil {
+		if errors.Is(err, ErrRuntimeLost) {
+			if stderr := c.diagnostics.String(); stderr != "" {
+				err = fmt.Errorf("%w; startup stderr: %s", err, stderr)
+			}
+		}
+		c.diagnostics.Reset()
+		return err
+	}
+	c.diagnostics.Reset()
+	if info.ProtocolVersion != 3 || info.Name != "nimbus-agent-runtime" {
 		return errors.New("incompatible nimbus-agent-runtime; install a protocol v3 release")
 	}
-	return err
+	return nil
 }
 func (r *Runtime) Turn(ctx context.Context, input TurnInput, onEvent func(model.TurnEvent) error, onQuestion func(context.Context, model.QuestionRequest) (model.QuestionAnswer, error), onTool func(context.Context, model.ToolCall) (model.ToolResult, error)) error {
 	wire, err := turnRequest(input)

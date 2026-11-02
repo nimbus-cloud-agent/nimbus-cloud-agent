@@ -12,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/executor"
+	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/logging"
 	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/model"
 	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/store"
 )
@@ -75,6 +76,9 @@ func (s *Server) settingsRoutes(r *gin.Engine) {
 				if strings.TrimSpace(v) == "" {
 					s.fail(c, 400, fmt.Errorf("设置值不能为空"))
 					return
+				}
+				if field.key == "deepseek_api_key" {
+					logging.RegisterSecrets(strings.TrimSpace(v))
 				}
 				if e := s.S.Set(field.key, strings.TrimSpace(v)); e != nil {
 					s.fail(c, 500, e)

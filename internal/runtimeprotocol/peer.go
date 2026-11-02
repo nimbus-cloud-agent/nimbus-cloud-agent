@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -39,6 +38,7 @@ type Peer struct {
 	mu       sync.Mutex
 	incoming map[jsonrpc2.ID]context.CancelFunc
 	sequence atomic.Uint64
+	closing  atomic.Bool
 }
 
 var schemaOnce sync.Once
@@ -91,12 +91,12 @@ func validate(name string, value any) error {
 func New(ctx context.Context, stream io.ReadWriteCloser, dispatch Dispatcher) *Peer {
 	ctx, cancel := context.WithCancel(ctx)
 	p := &Peer{ctx: ctx, cancel: cancel, dispatch: dispatch, incoming: map[jsonrpc2.ID]context.CancelFunc{}}
-	p.conn = jsonrpc2.NewConn(ctx, jsonrpc2.NewBufferedStream(stream, jsonrpc2.VSCodeObjectCodec{}), p, jsonrpc2.SetLogger(log.New(io.Discard, "", 0)))
+	p.conn = jsonrpc2.NewConn(ctx, jsonrpc2.NewBufferedStream(stream, jsonrpc2.VSCodeObjectCodec{}), p, jsonrpc2.SetLogger(protocolLogger{ctx: ctx, closing: &p.closing}))
 	go func() { <-p.conn.DisconnectNotify(); cancel() }()
 	return p
 }
 func (p *Peer) Done() <-chan struct{} { return p.conn.DisconnectNotify() }
-func (p *Peer) Close()                { p.cancel(); _ = p.conn.Close() }
+func (p *Peer) Close()                { p.closing.Store(true); p.cancel(); _ = p.conn.Close() }
 func (p *Peer) Call(ctx context.Context, method string, input, output any) error {
 	meta, ok := generated.Methods[method]
 	if !ok {

@@ -1,0 +1,34 @@
+services:
+  - type: web
+    name: nimbus-dev
+    runtime: image
+    image:
+      url: ghcr.io/nimbus-cloud-agent/nimbus-cloud-agent:dev
+      creds:
+        fromRegistryCreds:
+          name: GitHub Container Registry
+    plan: free
+    region: singapore
+    healthCheckPath: /api/health
+    envVars:
+      - key: NIMBUS_LOG_LEVEL
+        value: debug
+      - key: NIMBUS_DEPLOY_HANDOFF
+        value: "true"
+      - key: NIMBUS_POSTGRES
+        # Copy DATABASE_URL_UNPOOLED from `neon deploy` / `neon env pull`.
+        # Ownership locks, migrations and LISTEN require a direct connection.
+        sync: false
+      - key: NIMBUS_E2B_API_KEY
+        sync: false
+      - key: NIMBUS_DEEPSEEK_API_KEY
+        sync: false
+      - key: NIMBUS_BASIC_USER
+        sync: false
+      - key: NIMBUS_BASIC_PASS
+        sync: false
+      - key: NIMBUS_PUBLIC_HOST
+        fromService:
+          type: web
+          name: nimbus-dev
+          envVarKey: RENDER_EXTERNAL_HOSTNAME

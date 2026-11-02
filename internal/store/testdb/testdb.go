@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/store"
 )
@@ -86,5 +87,12 @@ func (p *Probe) Activity(ctx context.Context) ([]Activity, error) {
 }
 func (p *Probe) DisconnectListener(ctx context.Context) error {
 	_, err := p.admin.ExecContext(ctx, "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name=$1", p.application+"-listener")
+	return err
+}
+
+// RejectCompletedTurns injects a transaction failure only in this fixture's
+// disposable schema. Business tests never receive SQL/ORM handles.
+func (p *Probe) RejectCompletedTurns(ctx context.Context) error {
+	_, err := p.admin.ExecContext(ctx, "ALTER TABLE "+pgx.Identifier{p.application, "outbox_messages"}.Sanitize()+" ADD CONSTRAINT reject_completed_fixture CHECK (outcome <> 'completed')")
 	return err
 }

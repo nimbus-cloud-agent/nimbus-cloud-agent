@@ -57,7 +57,8 @@ func testContext(t *testing.T) context.Context {
 }
 func TestRPCMultiplexAndBackpressure(t *testing.T) {
 	r := fixture(t)
-	ctx := testContext(t)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	t.Cleanup(cancel)
 	var wg sync.WaitGroup
 	for i := 0; i < 12; i++ {
 		wg.Add(1)
