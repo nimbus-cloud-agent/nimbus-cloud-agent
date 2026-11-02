@@ -16,9 +16,9 @@ services:
       - key: NIMBUS_DEPLOY_HANDOFF
         value: "true"
       - key: NIMBUS_POSTGRES
-        fromDatabase:
-          name: nimbus-postgres
-          property: connectionString
+        # Copy DATABASE_URL_UNPOOLED from `neon deploy` / `neon env pull`.
+        # Ownership locks, migrations and LISTEN require a direct connection.
+        sync: false
       - key: NIMBUS_E2B_API_KEY
         sync: false
       - key: NIMBUS_DEEPSEEK_API_KEY

@@ -1,4 +1,4 @@
-# Render deployment (`dev` branch)
+# Render + Neon deployment (`dev` branch)
 
 This deployment runs a [prebuilt container](https://render.com/docs/deploying-an-image) from GitHub Container Registry. GitHub Actions tests the `dev` branch, builds and publishes the image, then asks Render to deploy that exact image. Render does not build the application from source.
 
@@ -14,14 +14,24 @@ The workflow publishes both `ghcr.io/nimbus-cloud-agent/nimbus-cloud-agent:dev` 
 
 1. Push the workflow changes to `dev`. The first run publishes the image and warns that the Render deploy hook secret is not set yet.
 
-2. Create a Render PostgreSQL database named **`nimbus-postgres`** in the **Singapore** region, matching the service in `render.yaml`. Use PostgreSQL 17, which is the version exercised by this repository's CI. The Blueprint connects through the database's [internal connection string](https://render.com/docs/postgresql-creating-connecting). Choose a paid database plan if you need the data to last: Render's [Free PostgreSQL databases](https://render.com/docs/free) expire after 30 days and are deleted after a further 14-day upgrade grace period. The Hobby workspace plan is separate from each service's compute plan.
+2. Link this directory to the existing Neon project and deploy its PostgreSQL configuration:
+
+   ```sh
+   npm i -g neon@latest
+   neon login
+   neon init -y --org-id org-dry-feather-16104029 --project-id silent-field-76474041 --branch production --services postgres --agent codex
+   neon deploy
+   ```
+
+   `neon.ts` manages the Neon configuration; `.neon` pins the local project/branch and stays ignored. The CLI writes `DATABASE_URL` and `DATABASE_URL_UNPOOLED` into `.env` if it exists, otherwise `.env.local`. Both files stay ignored. The existing Go pgx/GORM driver connects over TLS. Nimbus uses migrations, session advisory locks and `LISTEN/NOTIFY`, so use the **direct** `DATABASE_URL_UNPOOLED`, never the `-pooler` endpoint ([Neon pooling limitations](https://neon.com/docs/connect/connection-pooling)). Embedded SQL migrations initialize a fresh database on the first application start; no manual DDL is required. This setup uses a fresh test database and does not copy data from Render.
 
 3. Give Render permission to pull the GHCR image. In GitHub, create a [personal access token (classic)](https://docs.github.com/en/packages/learn-github-packages/about-permissions-for-github-packages) with the `read:packages` scope. In Render, add it under **Workspace Settings → Container Registry Credentials** with registry `ghcr.io`, your GitHub username, and the token. Keep the package private; the credential lets Render pull it without exposing it publicly.
 
-4. In Render, create a **Blueprint** from this repository and select the `dev` branch. The Blueprint defines `nimbus-dev` as an image-backed web service using the GHCR image. The `nimbus-postgres` database must exist before the first sync so Render can populate `NIMBUS_POSTGRES` with its internal connection string.
+4. In Render, create a **Blueprint** from this repository and select the `dev` branch. The Blueprint defines `nimbus-dev` as an image-backed web service using the GHCR image. PostgreSQL is hosted on Neon; this Blueprint does not provision a Render database.
 
    During the first Blueprint setup, provide these secrets in Render:
 
+   - `NIMBUS_POSTGRES` — copy the secret value of Neon's `DATABASE_URL_UNPOOLED`. Keep the TLS options from the CLI.
    - `NIMBUS_E2B_API_KEY` — required.
    - `NIMBUS_BASIC_USER` and `NIMBUS_BASIC_PASS` — set both to protect this single-user app. `/api/health` remains open for Render's health check.
    - `NIMBUS_DEEPSEEK_API_KEY` — optional; it can also be configured in the app's Settings.
@@ -38,7 +48,9 @@ The Go service writes structured JSON logs through Go's standard `log/slog` pack
 
 The final container installs `ca-certificates` so Go can verify E2B's public HTTPS certificates. A `tls_unknown_authority` error indicates a trust-store problem; the request's host, TLS diagnostics and error appear in Render logs.
 
-The service receives its runtime configuration from Render environment variables. The database URL and API keys are not baked into the image, and no config file or disk mount is needed. Conversation data lives in PostgreSQL; `/tmp/turns` is temporary working space.
+`npm start` loads `.env.local` and `.env` without overriding exported shell variables. Database selection is `--postgres` / `NIMBUS_POSTGRES`, then `DATABASE_URL_UNPOOLED`, then `DATABASE_URL`. An explicit Nimbus configuration wins over the standard aliases; remove an old local `NIMBUS_POSTGRES` when switching to Neon.
+
+The service receives its runtime configuration from Render environment variables. The database URL and API keys are not baked into the image, and no config file or disk mount is needed. Conversation data lives in Neon PostgreSQL; `/tmp/turns` is temporary working space.
 
 The web service uses Render's Free compute plan in this Blueprint. [Free web services](https://render.com/docs/free) spin down after 15 minutes without inbound traffic and can take about a minute to wake. Upgrade the web service's compute plan in Render if you want it to stay running.
 
@@ -52,9 +64,17 @@ Both versions must understand the handoff protocol. When upgrading from an older
 
 ## Pausing this environment
 
-Set the GitHub repository variable `RENDER_DEPLOY_ENABLED=false` to keep pushes running CI tests without publishing or deploying the dev image. Suspend the web service first, then suspend PostgreSQL in Render. Suspension preserves the database; it does not delete conversations.
+Set the GitHub repository variable `RENDER_DEPLOY_ENABLED=false` to keep pushes running CI tests without publishing or deploying the dev image. Suspend the web service in Render when an explicit stop is needed. Neon compute suspends automatically when idle; suspension preserves the database and does not delete conversations.
 
-To resume, restore PostgreSQL before the web service. Set `RENDER_DEPLOY_ENABLED=true` (or remove the variable) and rerun CI on the latest `dev` commit to publish and deploy the current code.
+To resume, resume the web service; Neon wakes automatically when Nimbus connects. For a one-time release while automatic deployment stays disabled, run the CI workflow manually on `dev` with `deploy_render=true` (or `gh workflow run ci.yml --ref dev -f deploy_render=true`). Set `RENDER_DEPLOY_ENABLED=true` (or remove the variable) only when continuous deployment is desired.
+
+## Idle behavior
+
+Render Free Web sleeps after 15 minutes without inbound HTTP traffic or WebSocket messages. Neon compute then sleeps after its configured idle timeout (5 minutes on Free); the next database connection wakes it. The database can therefore remain awake for roughly 20 minutes after the last user request. Actual timings depend on in-flight work and provider scheduling.
+
+While Nimbus is running, deployment handoff checks query PostgreSQL every second, sandbox cleanup checks run every 30 seconds, and change notifications hold a direct LISTEN connection. These checks stop when Render spins down the process. Do not add external uptime pings to the public service, and do not disable ownership safety to force a running instance's database to sleep. SSE heartbeats carry no database reads. Incoming terminal input, resize messages, page loads and reconnects are real inbound activity.
+
+To verify idle behavior, close app/client connections and use the Render and Neon management APIs to inspect compute state. Repeatedly calling the application's health URL or running a SQL query can wake/reset the resource being observed. Storage persists while Neon compute is suspended; scale-to-zero is not a promise of zero storage or network charges. See [Render Free Web](https://render.com/docs/free) and [Neon scale-to-zero](https://neon.com/docs/introduction/scale-to-zero).
 
 ## Log safety
 

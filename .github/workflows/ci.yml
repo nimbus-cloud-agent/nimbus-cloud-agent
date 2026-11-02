@@ -3,6 +3,12 @@ on:
   push:
     branches: [main, dev]
   pull_request:
+  workflow_dispatch:
+    inputs:
+      deploy_render:
+        description: Publish and deploy the dev image to Render
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
@@ -40,7 +46,7 @@ jobs:
           test -z "$(git ls-files internal/runtimeprotocol/generated runtime/src/generated runtime/dist runtime/test-dist release)"
 
   deploy-render:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/dev' && vars.RENDER_DEPLOY_ENABLED != 'false'
+    if: github.ref == 'refs/heads/dev' && ((github.event_name == 'push' && vars.RENDER_DEPLOY_ENABLED != 'false') || (github.event_name == 'workflow_dispatch' && inputs.deploy_render))
     needs: test
     runs-on: ubuntu-latest
     permissions:

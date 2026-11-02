@@ -19,3 +19,4 @@ test-results/
 /runtime/test-dist/
 /release/
 /nimbus
+.neon

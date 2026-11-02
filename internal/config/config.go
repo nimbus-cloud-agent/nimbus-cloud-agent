@@ -45,6 +45,9 @@ func Command(run func(Config) error) *cobra.Command {
 	f.String("log-level", "info", "Log level: debug, info, warn, error")
 	f.Bool("deploy-handoff", false, "Gracefully hand database ownership to a waiting deployment")
 	_ = v.BindPFlags(f)
+	// Migrations, advisory ownership locks and LISTEN need session affinity.
+	// Neon exports both URLs; prefer its direct connection over the pooler.
+	_ = v.BindEnv("postgres", "NIMBUS_POSTGRES", "DATABASE_URL_UNPOOLED", "DATABASE_URL")
 	root.RunE = func(cmd *cobra.Command, args []string) error {
 		if p := v.GetString("config"); p != "" {
 			v.SetConfigFile(p)
@@ -60,7 +63,7 @@ func Command(run func(Config) error) *cobra.Command {
 		c.LogLevel = v.GetString("log-level")
 		c.DeployHandoff = v.GetBool("deploy-handoff")
 		if c.Postgres == "" {
-			return fmt.Errorf("--postgres or NIMBUS_POSTGRES is required")
+			return fmt.Errorf("--postgres, NIMBUS_POSTGRES, DATABASE_URL_UNPOOLED or DATABASE_URL is required")
 		}
 		if c.E2BKey == "" {
 			return fmt.Errorf("--e2b-api-key or NIMBUS_E2B_API_KEY is required")
