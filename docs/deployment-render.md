@@ -1,5 +1,7 @@
 # Render + Neon deployment (`dev` branch)
 
+For day-to-day CLI operations, use the project skill [nimbus-dev-ops](../.agents/skills/nimbus-dev-ops/SKILL.md). It covers configuration, logs, deploys, start/stop, and idle checks for both providers.
+
 This deployment runs a [prebuilt container](https://render.com/docs/deploying-an-image) from GitHub Container Registry. GitHub Actions tests the `dev` branch, builds and publishes the image, then asks Render to deploy that exact image. Render does not build the application from source.
 
 ## Deployment flow
