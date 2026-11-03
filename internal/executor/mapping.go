@@ -22,19 +22,11 @@ func value[T any](v *T) (out T) {
 	}
 	return
 }
-func turnRequest(input TurnInput) (generated.TurnRequest, error) {
-	wire := generated.TurnRequest{SessionID: input.SessionID, TurnID: input.TurnID, MessageID: input.MessageID, Message: input.Message, SessionMode: generated.Mode(input.SessionMode), WorkDir: input.WorkDir, APIKey: input.APIKey, Recovery: optional(input.Recovery), Options: generated.TurnOptions{Model: generated.Model(input.Options.Model), Mode: generated.Mode(input.Options.Mode), Thinking: generated.Thinking(input.Options.Thinking), Plan: input.Options.Plan}, Records: []json.RawMessage{}, Skills: []generated.Skill{}, MCP: []generated.MCPTool{}, Images: []generated.ImageInput{}, Attachments: []generated.Attachment{}}
-	var err error
-	wire.Header, err = json.Marshal(input.Header)
-	if err != nil {
-		return wire, err
-	}
+func turnRequest(input TurnInput) generated.TurnRequest {
+	wire := generated.TurnRequest{SessionID: input.SessionID, TurnID: input.TurnID, MessageID: input.MessageID, Message: input.Message, WorkDir: input.WorkDir, APIKey: input.APIKey, Recovery: optional(input.Recovery), Options: generated.TurnOptions{Model: generated.Model(input.Options.Model), Thinking: generated.Thinking(input.Options.Thinking), Plan: input.Options.Plan}, Records: []json.RawMessage{}, Skills: []generated.Skill{}, MCP: []generated.MCPTool{}, Images: []generated.ImageInput{}, Attachments: []generated.Attachment{}}
+	wire.Header = mustMarshal(input.Header)
 	for _, record := range input.Records {
-		raw, err := json.Marshal(record)
-		if err != nil {
-			return wire, err
-		}
-		wire.Records = append(wire.Records, raw)
+		wire.Records = append(wire.Records, mustMarshal(record))
 	}
 	for _, skill := range input.Skills {
 		files := make([]generated.SkillFile, 0, len(skill.Files))
@@ -44,35 +36,18 @@ func turnRequest(input TurnInput) (generated.TurnRequest, error) {
 		wire.Skills = append(wire.Skills, generated.Skill{ID: skill.ID, Name: skill.Name, Description: skill.Description, Files: files})
 	}
 	for _, tool := range input.MCP {
-		schema, err := json.Marshal(tool.InputSchema)
-		if err != nil {
-			return wire, err
-		}
-		wire.MCP = append(wire.MCP, generated.MCPTool{Name: optional(tool.Name), Description: optional(tool.Description), InputSchema: schema, Server: optional(tool.Server), Error: optional(tool.Error)})
+		wire.MCP = append(wire.MCP, generated.MCPTool{Name: optional(tool.Name), Description: optional(tool.Description), InputSchema: mustMarshal(tool.InputSchema), Server: optional(tool.Server), Error: optional(tool.Error)})
 	}
 	for _, image := range input.Images {
-		ref, err := json.Marshal(image.Attachment)
-		if err != nil {
-			return wire, err
-		}
-		wire.Images = append(wire.Images, generated.ImageInput{ID: optional(image.ID), Name: optional(image.Name), URL: optional(image.URL), Attachment: ref})
+		wire.Images = append(wire.Images, generated.ImageInput{ID: optional(image.ID), Name: optional(image.Name), URL: optional(image.URL), Attachment: mustMarshal(image.Attachment)})
 	}
 	for _, attachment := range input.Attachments {
-		ref, err := json.Marshal(attachment.Ref)
-		if err != nil {
-			return wire, err
-		}
-		wire.Attachments = append(wire.Attachments, generated.Attachment{Ref: ref, Data: base64.StdEncoding.EncodeToString(attachment.Data)})
+		wire.Attachments = append(wire.Attachments, generated.Attachment{Ref: mustMarshal(attachment.Ref), Data: base64.StdEncoding.EncodeToString(attachment.Data)})
 	}
-	return wire, nil
+	return wire
 }
-func oauthRequest(input model.OAuthData) (generated.OAuthData, error) {
-	client, err := json.Marshal(input.Client)
-	if err != nil {
-		return generated.OAuthData{}, err
-	}
-	tokens, err := json.Marshal(input.Tokens)
-	return generated.OAuthData{State: optional(input.State), ExpiresAt: optional(input.ExpiresAt), Verifier: optional(input.Verifier), Client: client, Tokens: tokens}, err
+func oauthRequest(input model.OAuthData) generated.OAuthData {
+	return generated.OAuthData{State: optional(input.State), ExpiresAt: optional(input.ExpiresAt), Verifier: optional(input.Verifier), Client: mustMarshal(input.Client), Tokens: mustMarshal(input.Tokens)}
 }
 func mcpResult(wire generated.MCPResult) (model.MCPResult, error) {
 	result := model.MCPResult{OK: wire.Ok, AuthURL: value(wire.AuthURL), Error: value(wire.Error), OAuthState: wire.OauthState, Tools: []model.MCPTool{}, OAuthData: model.OAuthData{State: value(wire.OauthData.State), ExpiresAt: value(wire.OauthData.ExpiresAt), Verifier: value(wire.OauthData.Verifier)}}
