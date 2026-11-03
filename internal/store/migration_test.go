@@ -105,7 +105,7 @@ func TestModeRemovedMigration(t *testing.T) {
 	if err := db.Raw("SELECT options::text FROM sessions WHERE id=?", id).Scan(&raw).Error; err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(raw, "mode") {
+	if strings.Contains(raw, `"mode":`) {
 		t.Fatal("session options still contain mode", raw)
 	}
 	var out Outbox
@@ -113,7 +113,7 @@ func TestModeRemovedMigration(t *testing.T) {
 	if err := db.Raw("SELECT options::text FROM outbox_messages WHERE id=?", out.ID).Scan(&raw).Error; err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(raw, "mode") {
+	if strings.Contains(raw, `"mode":`) {
 		t.Fatal("outbox options still contain mode", raw)
 	}
 	var columnCount int64
