@@ -29,14 +29,11 @@ New session options are:
 {
   "model": "deepseek-flash",
   "thinking": "off",
-  "plan": false,
-  "mode": "standard"
+  "plan": false
 }
 ```
 
-`thinking` accepts `off`, `low`, `high`, or `max`. `mode` accepts `standard` or `ptc`. Flash is the only model accepted by Nimbus. Plan and thinking changes affect later turns; an accepted message retains its option snapshot.
-
-An empty session has `mode_locked: false`. Its first accepted message atomically fixes the session preset and changes this field to `true`, including when that message is still queued or later fails. Changing the preset via PATCH, message overrides, or retry returns `409`; use a new session instead. An image upload alone does not lock the preset.
+`thinking` accepts `off`, `low`, `high`, or `max`. Flash is the only model accepted by Nimbus. All tools run through Wasm PTC. Plan and thinking changes affect later turns; an accepted message retains its option snapshot.
 
 ## Images
 

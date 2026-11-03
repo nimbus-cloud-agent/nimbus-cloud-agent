@@ -84,12 +84,6 @@ func (s *Server) routes(r *gin.Engine) {
 				return e
 			}
 			x = model.Session(row)
-			if in.Options != nil {
-				if e := checkPreset(x, *in.Options); e != nil {
-					status = 409
-					return e
-				}
-			}
 			return tx.UpdateSession(c.Request.Context(), x.ID, changes)
 		}); e != nil {
 			s.fail(c, status, e)
@@ -119,9 +113,6 @@ func (s *Server) routes(r *gin.Engine) {
 			out, e := tx.Outbox(c.Request.Context(), c.Param("outbox"), x.ID)
 			if e != nil || out.Status != "failed" {
 				return fmt.Errorf("只有未送达的失败消息可以重发")
-			}
-			if e := checkPreset(x, out.Options); e != nil {
-				return e
 			}
 			if e := validOptions(out.Options); e != nil {
 				return e
@@ -244,7 +235,6 @@ func (s *Server) message(c *gin.Context) {
 		Model       *string  `json:"model"`
 		Thinking    *string  `json:"thinking"`
 		Plan        *bool    `json:"plan"`
-		Mode        *string  `json:"mode"`
 		ImageIDs    []string `json:"image_ids"`
 	}
 	if e := c.ShouldBindJSON(&in); e != nil {
@@ -286,16 +276,9 @@ func (s *Server) message(c *gin.Context) {
 		if in.Plan != nil {
 			opts.Plan = *in.Plan
 		}
-		if in.Mode != nil {
-			opts.Mode = *in.Mode
-		}
 		options := opts
 		if e := validOptions(options); e != nil {
 			status = 400
-			return e
-		}
-		if e := checkPreset(x, options); e != nil {
-			status = 409
 			return e
 		}
 		images, e := messageImages(c.Request.Context(), tx, x.ID, in.ImageIDs)
@@ -304,7 +287,6 @@ func (s *Server) message(c *gin.Context) {
 			return e
 		}
 		out = model.Outbox{ID: uuid.NewString(), SessionID: x.ID, TurnID: uuid.NewString(), ClientMsgID: in.ClientMsgID, Content: in.Message, Images: images, Options: options, Status: "queued", CreatedAt: time.Now()}
-		// The outbox trigger freezes the session preset in this transaction.
 		if e := tx.CreateOutbox(c.Request.Context(), store.Outbox(out)); e != nil {
 			return e
 		}
@@ -316,12 +298,6 @@ func (s *Server) message(c *gin.Context) {
 	c.JSON(202, out)
 }
 
-func checkPreset(sess model.Session, opts model.Options) error {
-	if sess.LockedMode != nil && opts.Mode != *sess.LockedMode {
-		return fmt.Errorf("此会话的工具模式已固定；切换 Standard / PTC 请新建会话")
-	}
-	return nil
-}
 func (s *Server) deleteSession(c *gin.Context) {
 	x, ok := s.session(c)
 	if !ok {

@@ -80,57 +80,58 @@ func migrationDB(t *testing.T, through string) (*gorm.DB, func(string)) {
 	return db, apply
 }
 
-func TestLegacyPresetAndModelMigration(t *testing.T) {
-	db, apply := migrationDB(t, "003~")
+func TestModeRemovedMigration(t *testing.T) {
+	db, apply := migrationDB(t, "008~")
 	id, blank := uuid.NewString(), uuid.NewString()
 	for _, sid := range []string{id, blank} {
 		if err := db.Exec("INSERT INTO sessions(id) VALUES (?)", sid).Error; err != nil {
 			t.Fatal(err)
 		}
 	}
-	// A former mixed session: standard -> PTC, with an incompatible queued turn.
-	for i, mode := range []string{"standard", "ptc", "standard"} {
-		status := "delivered"
-		var seq any = i * 10
-		if i == 2 {
-			status = "queued"
-			seq = nil
-		}
-		opts := testJSON(gin.H{"model": "deepseek-chat", "thinking": "off", "plan": false, "mode": mode})
-		if err := db.Exec("INSERT INTO outbox_messages(id,session_id,turn_id,client_msg_id,content,options,status,delivered_seq) VALUES (?,?,?,?,?,?,?,?)", uuid.NewString(), id, uuid.NewString(), uuid.NewString(), "old", opts, status, seq).Error; err != nil {
-			t.Fatal(err)
-		}
+	opts := testJSON(gin.H{"model": "deepseek-flash", "thinking": "off", "plan": false, "mode": "ptc"})
+	if err := db.Exec("INSERT INTO outbox_messages(id,session_id,turn_id,client_msg_id,content,options,status,delivered_seq) VALUES (?,?,?,?,?,?,?,?)", uuid.NewString(), id, uuid.NewString(), uuid.NewString(), "old", opts, "delivered", 0).Error; err != nil {
+		t.Fatal(err)
 	}
 	if err := db.Exec("INSERT INTO session_events(session_id,seq,type,payload) VALUES (?,0,'fixture','{\"original\":true}')", id).Error; err != nil {
 		t.Fatal(err)
 	}
-	apply("004_session_preset.sql")
-	apply("005_deepseek_flash.sql")
+	apply("009_remove_mode.sql")
 	var s Session
 	db.First(&s, "id=?", id)
-	if s.LockedMode == nil || *s.LockedMode != "ptc" || s.Options.Model != "deepseek-flash" {
+	if s.Options.Model != "deepseek-flash" || s.Options.Thinking != "off" {
 		t.Fatal(s)
 	}
-	var b Session
-	db.First(&b, "id=?", blank)
-	if b.LockedMode != nil {
-		t.Fatal("migration locked blank session")
+	var raw string
+	if err := db.Raw("SELECT options::text FROM sessions WHERE id=?", id).Scan(&raw).Error; err != nil {
+		t.Fatal(err)
 	}
-	var queued Outbox
-	db.First(&queued, "session_id=? AND delivered_seq IS NULL", id)
-	if queued.Status != "failed" || queued.Error == "" {
-		t.Fatal(queued)
+	if strings.Contains(raw, "mode") {
+		t.Fatal("session options still contain mode", raw)
 	}
-
-	var old Outbox
-	db.First(&old, "session_id=? AND delivered_seq=0", id)
-	if old.Options.Model != "deepseek-chat" {
-		t.Fatal("rewrote historical model")
+	var out Outbox
+	db.First(&out, "session_id=?", id)
+	if err := db.Raw("SELECT options::text FROM outbox_messages WHERE id=?", out.ID).Scan(&raw).Error; err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(raw, "mode") {
+		t.Fatal("outbox options still contain mode", raw)
+	}
+	var columnCount int64
+	if err := db.Raw("SELECT count(*) FROM information_schema.columns WHERE table_name='sessions' AND column_name='locked_mode'").Scan(&columnCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if columnCount != 0 {
+		t.Fatal("locked_mode column still exists")
 	}
 	var ev Event
 	db.First(&ev, "session_id=?", id)
 	encoded, _ := json.Marshal(ev.Payload)
 	if !bytes.Contains(encoded, []byte("original")) {
 		t.Fatal("rewrote native event", string(encoded))
+	}
+	var b Session
+	db.First(&b, "id=?", blank)
+	if b.Options.Model != "deepseek-flash" {
+		t.Fatal("blank session lost defaults", b)
 	}
 }

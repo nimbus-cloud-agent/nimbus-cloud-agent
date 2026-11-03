@@ -26,14 +26,12 @@ export type Options = {
   model: string;
   thinking: string;
   plan: boolean;
-  mode: string;
 };
 export type Session = {
   id: string;
   title: string;
   agent_state: string;
   options: Options;
-  mode_locked: boolean;
   last_active_at: string;
   sandbox: {
     state: string;

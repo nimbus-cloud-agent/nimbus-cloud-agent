@@ -26,7 +26,7 @@
 | Skill | 页面保存；真实模型读取 PostgreSQL 中的验证字符串；停用后新会话无法读取；全程不需要沙箱 |
 | Skill 校验 | 非法路径、二进制、101 个文件、单个文件超过 5 MiB 均拒绝 |
 | 模型 / Plan / 思考 | 已切换为 deepseek-flash；真实 max + 原生 Plan + Wasm PTC 通过 E2B 写入 `/workspace/plan-proof.txt` |
-| Plan 评审全流程 | 真实 Flash + DSH：PTC 调用原生 `exit_plan_mode`，Chrome 刷新保留待评审卡片，点击批准后原生 `plan/mode` 关闭 Plan 并继续回复；Standard 下提交修改意见后出现修订版计划，暂不决定结束本轮并保留 Plan；Stop 中断待评审，不会批准 |
+| Plan 评审全流程 | 真实 Flash + DSH：PTC 调用原生 `exit_plan_mode`，Chrome 刷新保留待评审卡片，点击批准后原生 `plan/mode` 关闭 Plan 并继续回复；提交修改意见后出现修订版计划，暂不决定结束本轮并保留 Plan；Stop 中断待评审，不会批准 |
 | Plan 等待与答案边界 | PTC 的 `timeoutMs=10000`，等待人工确认 12 秒仍可批准继续；数据库集成测试覆盖跨会话回答、无效选项、重复回答幂等、多标签页冲突、取消 / 重启后的失效评审、仅原生事件更新 Plan 默认值 |
 | 会话隔离 | 第二个会话获得不同 E2B ID，无法读到第一个沙箱内的验证文件 |
 | 停止 | 有增量输出时停止，保留部分文本、旧轮标记 interrupted、会话回到 idle |

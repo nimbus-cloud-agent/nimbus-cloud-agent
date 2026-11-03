@@ -30,14 +30,14 @@ async function until(fn, description) {
   }
   throw Error("Timed out: " + description);
 }
-async function start(mode, message) {
+async function start(message) {
   const s = await api("/sessions", {});
   sessions.push(s.id);
   await api(
     `/sessions/${s.id}`,
     {
-      title: "Plan 评审验证 · " + mode,
-      options: { ...s.options, mode, plan: true },
+      title: "Plan 评审验证",
+      options: { ...s.options, plan: true },
     },
     "PATCH",
   );
@@ -82,7 +82,6 @@ const request =
   "这是计划评审验证。不要使用沙箱、网络或文件工具。立即调用 exit_plan_mode 提交 Markdown 计划：# 打招呼计划\\n\\n1. 获得批准后只回复 PLAN_APPROVED_OK。必须使用工具提交评审，不要只输出文本。如果用户要求修改，按意见重新调用 exit_plan_mode。";
 try {
   const { s, o } = await start(
-    "ptc",
     request +
       "通过 run_code 调用 tools.exit_plan_mode；run_code 的 timeoutMs 设为 10000。",
   );
@@ -128,7 +127,7 @@ try {
     "PASS PTC native review, refresh, human wait, browser approval, mode transition and continuation",
   );
 
-  const next = await start("standard", request);
+  const next = await start(request);
   const first = await pending(next.s, next.o);
   await page.getByRole("button", { name: "继续规划", exact: true }).click();
   await page
@@ -148,10 +147,10 @@ try {
     "dismissed",
   );
   console.log(
-    "PASS Standard native review, feedback, revised plan, dismissal and retained Plan mode",
+    "PASS PTC native review, feedback, revised plan, dismissal and retained Plan mode",
   );
 
-  const stopping = await start("ptc", request);
+  const stopping = await start(request);
   const open = await pending(stopping.s, stopping.o);
   await api(`/sessions/${stopping.s.id}/stop`, {});
   const stopped = await completed(stopping.s, stopping.o, "interrupted");

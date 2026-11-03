@@ -55,13 +55,6 @@ export async function runTurn(
   const cancel = () => handle?.agent.cancel({ kind: "user" });
   signal.addEventListener("abort", cancel, { once: true });
   try {
-    if (
-      !["standard", "ptc"].includes(input.session_mode) ||
-      input.options.mode !== input.session_mode
-    )
-      throw Error(
-        "Session preset mismatch; create a new session to change presets",
-      );
     if (input.options.model !== "deepseek-flash")
       throw Error("Nimbus requires model deepseek-flash");
     const requireDSH = createRequire(import.meta.url);
@@ -334,14 +327,12 @@ export async function runTurn(
       section:
         "Plan mode is active. Investigate the task and produce a clear implementation plan. You may write plan documents into the E2B sandbox. Submit the complete Markdown plan with exit_plan_mode for human review. Wait for approval before implementing the plan; if the user asks for revisions, revise and submit again. No additional tool execution restrictions apply.",
     });
-    if (input.session_mode === "ptc") {
-      await ctx.plugin(WasmRuntime).await();
-    }
+    await ctx.plugin(WasmRuntime).await();
     for (const name of ["fs", "subprocess", "sandbox", "bash", "jobs"]) {
       if (ctx.get(name) !== undefined)
         throw Error("Unsafe local provider loaded: " + name);
     }
-    if (input.session_mode === "ptc" && ctx.ptcRuntime.isolation !== "wasm")
+    if (ctx.ptcRuntime.isolation !== "wasm")
       throw Error("Non-Wasm PTC runtime rejected");
 
     // Hydrate using the public persistence handle. DSH owns its physical file format.
@@ -382,7 +373,7 @@ export async function runTurn(
       chain.catch(() => {});
     });
     const setup = (agentCtx: Context) => {
-      if (input.session_mode === "ptc") agentCtx.tools.presentAs("ptc");
+      agentCtx.tools.presentAs("ptc");
     };
     const agentOptions = {
       provider: "deepseek-official",

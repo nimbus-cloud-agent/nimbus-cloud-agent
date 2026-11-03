@@ -15,9 +15,7 @@ export function turnInput(overrides: Partial<TurnRequest> = {}): TurnRequest {
     turn_id: "turn",
     message_id: "message",
     message: "hello",
-    session_mode: "standard",
     options: {
-      mode: "standard",
       model: "deepseek-flash",
       thinking: "off",
       plan: false,

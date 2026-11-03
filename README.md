@@ -19,7 +19,7 @@ Plan a task, review its execution, and work with the resulting files in a live t
 - **Persistent agent runtime.** Go supervises one `nimbus-agent-runtime` process wrapping DeepSeek Harness. Node restarts do not disconnect the Go-owned terminal.
 - **Skills and MCP.** Manage multi-file Skills and connect Streamable HTTP MCP services, including OAuth authorization.
 
-Standard / Wasm PTC is fixed after a session's first message. Plan and thinking settings can change for later turns. Pure chat, image analysis, and MCP-only tasks do not create a sandbox.
+All tools run through Wasm PTC. Plan and thinking settings can change for later turns. Pure chat, image analysis, and MCP-only tasks do not create a sandbox.
 
 ## Demo
 
@@ -60,7 +60,7 @@ For Linux, an existing PostgreSQL server, separate release artifacts, configurat
 
 ### Try it
 
-1. Create a session and select Standard or Wasm PTC.
+1. Create a session. All tools run through Wasm PTC.
 2. Ask: “Generate a sample sales CSV, analyze it with Python, and save a Markdown report in `/workspace`.”
 3. Expand the tool calls to see what ran. In the terminal, run `ls -lh /workspace` and inspect the files.
 4. Enable Plan for a new task to review its proposed steps before continuing.

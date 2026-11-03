@@ -219,7 +219,7 @@ func (s *Server) view(ctx context.Context, sess model.Session) (model.SessionVie
 	if state, ok := s.provisioning.Load(sess.ID); ok {
 		sandbox = model.SandboxView{State: "provisioning", Message: state.(string)}
 	}
-	return model.SessionView{ID: sess.ID, Title: sess.Title, AgentState: sess.AgentState, SyncedSeq: sess.SyncedSeq, Options: sess.Options, ModeLocked: sess.LockedMode != nil, CreatedAt: sess.CreatedAt, LastActiveAt: sess.LastActiveAt, Sandbox: sandbox}, nil
+	return model.SessionView{ID: sess.ID, Title: sess.Title, AgentState: sess.AgentState, SyncedSeq: sess.SyncedSeq, Options: sess.Options, CreatedAt: sess.CreatedAt, LastActiveAt: sess.LastActiveAt, Sandbox: sandbox}, nil
 }
 func (s *Server) respondSession(c *gin.Context, status int, sess model.Session) {
 	view, err := s.view(c.Request.Context(), sess)
@@ -288,9 +288,6 @@ func validOptions(x model.Options) error {
 	}
 	if !strings.Contains("|off|low|high|max|", "|"+x.Thinking+"|") {
 		return fmt.Errorf("thinking must be off / low / high / max")
-	}
-	if x.Mode != "standard" && x.Mode != "ptc" {
-		return fmt.Errorf("mode must be standard or ptc")
 	}
 	return nil
 }

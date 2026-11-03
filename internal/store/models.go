@@ -11,8 +11,7 @@ type Session struct {
 	Title        string
 	AgentState   string
 	SyncedSeq    int64
-	Options      model.Options `gorm:"type:jsonb;serializer:json"`
-	LockedMode   *string
+	Options      model.Options       `gorm:"type:jsonb;serializer:json"`
 	Header       *model.NativeHeader `gorm:"type:jsonb;serializer:json"`
 	CreatedAt    time.Time
 	LastActiveAt time.Time

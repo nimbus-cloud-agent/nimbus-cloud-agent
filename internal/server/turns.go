@@ -101,13 +101,6 @@ func (s *Server) runTurn(ctx context.Context, o model.Outbox) (started bool) {
 		return
 	}
 
-	if sess.LockedMode == nil {
-		turnErr = fmt.Errorf("session preset was not initialized")
-		return
-	}
-	if turnErr = checkPreset(sess, o.Options); turnErr != nil {
-		return
-	}
 	if turnErr = validOptions(o.Options); turnErr != nil {
 		return
 	}
@@ -161,7 +154,7 @@ func (s *Server) runTurn(ctx context.Context, o model.Outbox) (started bool) {
 		img := model.Image(row)
 		attachments = append(attachments, model.Attachment{Ref: img.Ref, Data: img.Data})
 	}
-	input := executor.TurnInput{SessionID: o.SessionID, TurnID: o.TurnID, MessageID: o.ClientMsgID, Message: o.Content, SessionMode: *sess.LockedMode, Options: o.Options, Header: sess.Header, Records: records, WorkDir: dir, APIKey: s.S.Get("deepseek_api_key", s.C.DeepSeekKey), Skills: skills, MCP: s.mcpTools(ctx, mcps), Images: o.Images, Attachments: attachments, Recovery: recovery}
+	input := executor.TurnInput{SessionID: o.SessionID, TurnID: o.TurnID, MessageID: o.ClientMsgID, Message: o.Content, Options: o.Options, Header: sess.Header, Records: records, WorkDir: dir, APIKey: s.S.Get("deepseek_api_key", s.C.DeepSeekKey), Skills: skills, MCP: s.mcpTools(ctx, mcps), Images: o.Images, Attachments: attachments, Recovery: recovery}
 	logging.RegisterSecrets(input.APIKey)
 	turnErr = s.R.Turn(ctx, input, func(event model.TurnEvent) error {
 		// Native cancellation may flush history after the original request context has
