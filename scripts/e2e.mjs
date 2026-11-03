@@ -122,7 +122,7 @@ try {
   const ptc = await turn(
     ptcSession,
     "请使用 run_code 工具调用 tools.sandbox_exec 执行 printf NIMBUS_PTC_OK，打印输出。",
-    { model: "deepseek-flash", thinking: "off", mode: "ptc", plan: false },
+    { model: "deepseek-flash", thinking: "off", plan: false },
   );
   assert.ok(
     ptc.events.some(

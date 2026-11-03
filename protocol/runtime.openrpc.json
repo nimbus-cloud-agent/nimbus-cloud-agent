@@ -261,13 +261,6 @@
       "TurnOptions": {
         "type": "object",
         "properties": {
-          "mode": {
-            "type": "string",
-            "enum": [
-              "standard",
-              "ptc"
-            ]
-          },
           "model": {
             "type": "string",
             "const": "deepseek-flash"
@@ -286,7 +279,6 @@
           }
         },
         "required": [
-          "mode",
           "model",
           "thinking",
           "plan"
@@ -422,13 +414,6 @@
           "message": {
             "type": "string"
           },
-          "session_mode": {
-            "type": "string",
-            "enum": [
-              "standard",
-              "ptc"
-            ]
-          },
           "options": {
             "$ref": "#/components/schemas/TurnOptions"
           },
@@ -477,7 +462,6 @@
           "turn_id",
           "message_id",
           "message",
-          "session_mode",
           "options",
           "records",
           "work_dir",

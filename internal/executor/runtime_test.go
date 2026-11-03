@@ -41,7 +41,7 @@ func streamTurn(r *Runtime, ctx context.Context, message string, output func(mod
 	}, nil, nil)
 }
 func fixtureTurn() TurnInput {
-	return TurnInput{SessionID: "session", TurnID: "turn", MessageID: "message", Message: "review", SessionMode: "standard", Options: model.DefaultOptions()}
+	return TurnInput{SessionID: "session", TurnID: "turn", MessageID: "message", Message: "review", Options: model.DefaultOptions()}
 }
 func fixture(t *testing.T) *Runtime {
 	t.Helper()

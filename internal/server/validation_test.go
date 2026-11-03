@@ -28,15 +28,15 @@ func TestSkillValidation(t *testing.T) {
 }
 func TestOptions(t *testing.T) {
 	for _, level := range []string{"off", "low", "high", "max"} {
-		if e := validOptions(model.Options{Model: "deepseek-flash", Thinking: level, Mode: "ptc"}); e != nil {
+		if e := validOptions(model.Options{Model: "deepseek-flash", Thinking: level}); e != nil {
 			t.Fatal(e)
 		}
 	}
-	if validOptions(model.Options{Model: "deepseek-flash", Thinking: "medium", Mode: "standard"}) == nil {
+	if validOptions(model.Options{Model: "deepseek-flash", Thinking: "medium"}) == nil {
 		t.Fatal("accepted non-native thinking level")
 	}
 	for _, name := range []string{"deepseek-chat", "deepseek-reasoner", "deepseek-v4-pro", ""} {
-		if validOptions(model.Options{Model: name, Thinking: "off", Mode: "standard"}) == nil {
+		if validOptions(model.Options{Model: name, Thinking: "off"}) == nil {
 			t.Fatalf("accepted unsupported model %q", name)
 		}
 	}

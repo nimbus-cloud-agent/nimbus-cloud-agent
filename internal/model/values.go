@@ -10,12 +10,11 @@ import (
 type Options struct {
 	Model    string `json:"model"`
 	Thinking string `json:"thinking"`
-	Mode     string `json:"mode"`
 	Plan     bool   `json:"plan"`
 }
 
 func DefaultOptions() Options {
-	return Options{Model: "deepseek-flash", Thinking: "off", Mode: "standard"}
+	return Options{Model: "deepseek-flash", Thinking: "off"}
 }
 
 type ImageDimensions struct {

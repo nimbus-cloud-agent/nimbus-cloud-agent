@@ -86,7 +86,7 @@ func TestTypedJSONAtDAOBoundary(t *testing.T) {
 	}
 }
 
-func TestDAOTransactionRollbackAndPresetGuard(t *testing.T) {
+func TestDAOTransactionRollback(t *testing.T) {
 	s, session := typedStore(t)
 	ctx := context.Background()
 	title := "rolled back"
@@ -112,19 +112,17 @@ func TestDAOTransactionRollbackAndPresetGuard(t *testing.T) {
 		t.Fatal(err)
 	}
 	row, err = s.Session(ctx, session.ID)
-	if err != nil || row.LockedMode == nil || *row.LockedMode != "standard" {
-		t.Fatalf("preset not locked: %+v %v", row, err)
+	if err != nil {
+		t.Fatal(err)
 	}
 	changed := session.Options
-	changed.Mode = "ptc"
-	if err := s.UpdateSession(ctx, session.ID, SessionChanges{Options: &changed}); err == nil {
-		t.Fatal("DAO bypassed preset guard")
+	changed.Thinking = "max"
+	if err := s.UpdateSession(ctx, session.ID, SessionChanges{Options: &changed}); err != nil {
+		t.Fatal(err)
 	}
-	if err := s.db.Model(&Session{}).Where("id=?", session.ID).Update("locked_mode", nil).Error; err == nil {
-		t.Fatal("database allowed unlocking a used session")
-	}
-	if err := s.db.Model(&Outbox{}).Where("id=?", out.ID).Update("options", `{"mode":"ptc"}`).Error; err == nil {
-		t.Fatal("database allowed queued preset switch")
+	row, err = s.Session(ctx, session.ID)
+	if err != nil || row.Options.Thinking != "max" {
+		t.Fatalf("session options update failed: %+v %v", row, err)
 	}
 }
 

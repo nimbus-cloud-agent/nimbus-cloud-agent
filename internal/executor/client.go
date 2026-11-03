@@ -17,14 +17,14 @@ import (
 
 // Application-facing inputs intentionally do not alias generated wire types.
 type TurnInput struct {
-	SessionID, TurnID, MessageID, Message, SessionMode, WorkDir, APIKey, Recovery string
-	Options                                                                       model.Options
-	Header                                                                        *model.NativeHeader
-	Records                                                                       []model.NativeRecord
-	Skills                                                                        []model.Skill
-	MCP                                                                           []model.MCPTool
-	Images                                                                        []model.MessageImage
-	Attachments                                                                   []model.Attachment
+	SessionID, TurnID, MessageID, Message, WorkDir, APIKey, Recovery string
+	Options                                                          model.Options
+	Header                                                           *model.NativeHeader
+	Records                                                          []model.NativeRecord
+	Skills                                                           []model.Skill
+	MCP                                                              []model.MCPTool
+	Images                                                           []model.MessageImage
+	Attachments                                                      []model.Attachment
 }
 type MCPInput struct {
 	Op, URL, CallbackURL string

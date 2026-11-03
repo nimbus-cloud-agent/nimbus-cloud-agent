@@ -8,7 +8,6 @@ type Session struct {
 	AgentState   string        `json:"agent_state"`
 	SyncedSeq    int64         `json:"synced_seq"`
 	Options      Options       `json:"options"`
-	LockedMode   *string       `json:"-"`
 	Header       *NativeHeader `json:"-"`
 	CreatedAt    time.Time     `json:"created_at"`
 	LastActiveAt time.Time     `json:"last_active_at"`
@@ -113,7 +112,6 @@ type SessionView struct {
 	AgentState   string      `json:"agent_state"`
 	SyncedSeq    int64       `json:"synced_seq"`
 	Options      Options     `json:"options"`
-	ModeLocked   bool        `json:"mode_locked"`
 	CreatedAt    time.Time   `json:"created_at"`
 	LastActiveAt time.Time   `json:"last_active_at"`
 	Sandbox      SandboxView `json:"sandbox"`

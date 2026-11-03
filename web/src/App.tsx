@@ -13,7 +13,6 @@ import {
   Workflow,
   BrainCircuit,
   Braces,
-  LockKeyhole,
   ImagePlus,
   ChevronRight,
   Code2,
@@ -215,9 +214,6 @@ export default function App() {
           result,
         ]);
         sendAttempt.current = null;
-        setSessions((xs) =>
-          xs.map((x) => (x.id === s.id ? { ...x, mode_locked: true } : x)),
-        );
       } catch (e) {
         setDraft(content);
         if (selectedID.current === s.id) setDraftImages(images);
@@ -577,28 +573,11 @@ export default function App() {
                   onChange={(v) => options({ thinking: v })}
                 />
               </div>
-              <Picker
-                label="工具模式"
-                icon={
-                  current.mode_locked || sending ? (
-                    <LockKeyhole size={14} />
-                  ) : (
-                    <Braces size={16} />
-                  )
-                }
-                disabled={current.mode_locked || sending}
-                description={
-                  current.mode_locked
-                    ? "工具模式已固定，切换请新建会话"
-                    : "首条消息发送后工具模式固定"
-                }
-                value={current.options.mode}
-                values={[
-                  ["standard", "标准工具"],
-                  ["ptc", "Wasm PTC"],
-                ]}
-                onChange={(v) => options({ mode: v })}
-              />
+              <span className="toolbar-divider" />
+              <span className="model-label" title="Wasm PTC">
+                <Braces size={16} />
+                Wasm PTC
+              </span>
             </div>
           )}
           <div
@@ -803,9 +782,7 @@ export default function App() {
                 <kbd>Enter</kbd> 发送 <kbd>Shift + Enter</kbd> 换行
               </span>
               <span>
-                {current?.mode_locked
-                  ? "工具模式已固定 · 切换请新建会话"
-                  : "首条消息发送后，工具模式固定"}
+                {"工具通过 Wasm PTC 执行"}
               </span>
             </div>
           </div>

@@ -130,7 +130,6 @@ await api(
     options: {
       model: "deepseek-flash",
       thinking: "max",
-      mode: "standard",
       plan: true,
     },
   },
@@ -223,7 +222,6 @@ await api(
     options: {
       model: "deepseek-flash",
       thinking: "off",
-      mode: "standard",
       plan: false,
     },
   },

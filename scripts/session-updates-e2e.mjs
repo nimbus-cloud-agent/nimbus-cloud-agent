@@ -113,19 +113,12 @@ try {
   page.on("pageerror", (e) => errors.push(e.message));
   await page.goto(base + "/#" + s.id);
   await page.getByText("DeepSeek Flash", { exact: true }).waitFor();
-  const picker = page.locator(".model-bar .select").last().locator("button");
-  assert.equal(await picker.isDisabled(), false);
-  await picker.click();
-  await page.getByRole("option", { name: "Wasm PTC" }).click();
-  await until(async () => (await api(path)).options.mode === "ptc");
-  await picker.click();
-  await page.getByRole("option", { name: "标准工具" }).click();
-  await until(async () => (await api(path)).options.mode === "standard");
+  await page.getByText("Wasm PTC", { exact: true }).waitFor();
   await page.locator(".model-bar .switch__control").click();
   await until(async () => (await api(path)).options.plan);
   await page.locator(".model-bar .switch__control").click();
   await until(async () => !(await api(path)).options.plan);
-  console.log("PASS blank preset selection and Plan switch");
+  console.log("PASS Wasm PTC label and Plan switch");
 
   const fixture = await browser.newPage({
     viewport: { width: 500, height: 240 },
@@ -209,23 +202,11 @@ try {
     ),
   );
   assert.equal((await api(path)).sandbox.state, "not_started");
-  await until(() => picker.isDisabled());
-  assert.equal(
-    (
-      await request(path + "/messages", {
-        message: "wrong preset",
-        mode: "ptc",
-        client_msg_id: crypto.randomUUID(),
-      })
-    ).status,
-    409,
-  );
   console.log(
-    "PASS Flash reads native image content; preset locked; no E2B allocation",
+    "PASS Flash reads native image content; no E2B allocation",
   );
   await page.reload();
   await page.locator(".user-message img").waitFor();
-  assert.equal(await picker.isDisabled(), true);
   await page
     .getByRole("textbox", { name: "发送消息" })
     .fill("刚才图片里的文字是什么？只回答该字符串。");
@@ -261,7 +242,6 @@ try {
     client_msg_id: crypto.randomUUID(),
     message:
       "当前为 Plan 模式。请使用 run_code 调用 tools.sandbox_write_file，在 /workspace/plan-proof.txt 写入 FLASH_PTC_PLAN_OK；仅保存这个计划文档，不要执行其他任务。",
-    mode: "ptc",
     thinking: "max",
     plan: true,
   });
@@ -280,7 +260,6 @@ try {
         e.type.includes("plan") && JSON.stringify(e.payload).includes("true"),
     ),
   );
-  assert.equal((await api(`/sessions/${ptc.id}`)).options.mode, "ptc");
   console.log("PASS Flash + max + native Plan + Wasm PTC + real E2B write");
   console.log("ALL SESSION UPDATE E2E CHECKS PASSED");
 } finally {

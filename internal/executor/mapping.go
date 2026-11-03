@@ -23,7 +23,7 @@ func value[T any](v *T) (out T) {
 	return
 }
 func turnRequest(input TurnInput) (generated.TurnRequest, error) {
-	wire := generated.TurnRequest{SessionID: input.SessionID, TurnID: input.TurnID, MessageID: input.MessageID, Message: input.Message, SessionMode: generated.Mode(input.SessionMode), WorkDir: input.WorkDir, APIKey: input.APIKey, Recovery: optional(input.Recovery), Options: generated.TurnOptions{Model: generated.Model(input.Options.Model), Mode: generated.Mode(input.Options.Mode), Thinking: generated.Thinking(input.Options.Thinking), Plan: input.Options.Plan}, Records: []json.RawMessage{}, Skills: []generated.Skill{}, MCP: []generated.MCPTool{}, Images: []generated.ImageInput{}, Attachments: []generated.Attachment{}}
+	wire := generated.TurnRequest{SessionID: input.SessionID, TurnID: input.TurnID, MessageID: input.MessageID, Message: input.Message, WorkDir: input.WorkDir, APIKey: input.APIKey, Recovery: optional(input.Recovery), Options: generated.TurnOptions{Model: generated.Model(input.Options.Model), Thinking: generated.Thinking(input.Options.Thinking), Plan: input.Options.Plan}, Records: []json.RawMessage{}, Skills: []generated.Skill{}, MCP: []generated.MCPTool{}, Images: []generated.ImageInput{}, Attachments: []generated.Attachment{}}
 	var err error
 	wire.Header, err = json.Marshal(input.Header)
 	if err != nil {

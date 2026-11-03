@@ -23,7 +23,6 @@ test(
         runtime.client.turn(
           turnInput({
             options: {
-              mode: "standard",
               model: "deepseek-chat" as "deepseek-flash",
               thinking: "off",
               plan: false,
@@ -33,10 +32,7 @@ test(
         /Invalid TurnRequest/,
       );
       for (let i = 0; i < 3; i++) {
-        await assert.rejects(
-          runtime.client.turn(turnInput({ session_mode: "ptc" })),
-          /preset mismatch/,
-        );
+        await assert.rejects(runtime.client.turn(turnInput()));
         const status = await runtime.client.status({});
         assert.equal(status.pid, first.pid);
         assert.equal(status.workers, 1);

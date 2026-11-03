@@ -49,7 +49,6 @@ assert.equal(
       client_msg_id: crypto.randomUUID(),
       model: "deepseek-flash",
       thinking: "medium",
-      mode: "standard",
     })
   ).status,
   400,

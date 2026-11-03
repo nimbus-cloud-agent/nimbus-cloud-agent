@@ -51,52 +51,44 @@ func expectOptions(t *testing.T, r *gin.Engine, status int, method, path string,
 	return data
 }
 
-func TestSessionPresetLifecycle(t *testing.T) {
+func TestSessionOptionsLifecycle(t *testing.T) {
 	db := optionsDB(t)
 	r := optionsRouter(db)
 	s := expectOptions(t, r, 201, "POST", "/sessions", nil)
 	path := "/sessions/" + s["id"].(string)
-	if s["mode_locked"] != false {
-		t.Fatal("blank session is locked")
-	}
 	opts := s["options"].(map[string]any)
 	if opts["model"] != "deepseek-flash" {
 		t.Fatal(opts)
 	}
-	opts["mode"] = "ptc"
-	expectOptions(t, r, 200, "PATCH", path, gin.H{"options": opts})
-	opts["mode"] = "standard"
+	if _, ok := opts["mode"]; ok {
+		t.Fatal("session options still contain mode", opts)
+	}
+	opts["thinking"] = "max"
 	expectOptions(t, r, 200, "PATCH", path, gin.H{"options": opts})
 	cid := uuid.NewString()
-	// Partial overrides must not be ignored when model is absent.
-	first := expectOptions(t, r, 202, "POST", path+"/messages", gin.H{"message": "hello", "client_msg_id": cid, "mode": "ptc"})
-	s = expectOptions(t, r, 200, "GET", path, nil)
-	if s["mode_locked"] != true || s["options"].(map[string]any)["mode"] != "ptc" {
-		t.Fatal(s)
-	}
-	duplicate := expectOptions(t, r, 202, "POST", path+"/messages", gin.H{"message": "retry", "client_msg_id": cid, "mode": "standard"})
+	first := expectOptions(t, r, 202, "POST", path+"/messages", gin.H{"message": "hello", "client_msg_id": cid, "thinking": "low"})
+	duplicate := expectOptions(t, r, 202, "POST", path+"/messages", gin.H{"message": "retry", "client_msg_id": cid, "thinking": "high"})
 	if first["id"] != duplicate["id"] {
 		t.Fatal("duplicate lost idempotency")
 	}
-	expectOptions(t, r, 409, "PATCH", path, gin.H{"options": opts})
-	expectOptions(t, r, 409, "POST", path+"/messages", gin.H{"message": "hello", "client_msg_id": uuid.NewString(), "mode": "standard"})
-	opts["mode"], opts["thinking"], opts["plan"] = "ptc", "max", true
+	if first["options"].(map[string]any)["thinking"] != "low" {
+		t.Fatal("first message did not keep its option snapshot", first)
+	}
+	opts["thinking"], opts["plan"] = "max", true
 	expectOptions(t, r, 200, "PATCH", path, gin.H{"options": opts})
 	next := expectOptions(t, r, 202, "POST", path+"/messages", gin.H{"message": "next", "client_msg_id": uuid.NewString(), "plan": false})
 	got := next["options"].(map[string]any)
-	if got["plan"] != false || got["thinking"] != "max" || got["mode"] != "ptc" {
+	if got["plan"] != false || got["thinking"] != "max" {
 		t.Fatal(got)
 	}
 	if err := db.UpdateOutbox(context.Background(), first["id"].(string), store.OutboxChanges{Status: ptr("failed")}); err != nil {
 		t.Fatal(err)
 	}
-	// Construct a new router to demonstrate the lock is durable, not process state.
 	r = optionsRouter(db)
-	expectOptions(t, r, 409, "POST", path+"/messages", gin.H{"message": "hello", "client_msg_id": uuid.NewString(), "mode": "standard"})
 	expectOptions(t, r, 202, "POST", path+"/messages/"+first["id"].(string)+"/retry", nil)
 }
 
-func TestConcurrentFirstMessagePreset(t *testing.T) {
+func TestConcurrentFirstMessages(t *testing.T) {
 	db := optionsDB(t)
 	r := optionsRouter(db)
 	for i := 0; i < 12; i++ {
@@ -104,29 +96,17 @@ func TestConcurrentFirstMessagePreset(t *testing.T) {
 		path := "/sessions/" + s["id"].(string)
 		var wg sync.WaitGroup
 		statuses := make([]int, 2)
-		for j, mode := range []string{"standard", "ptc"} {
+		for j := 0; j < 2; j++ {
 			wg.Add(1)
-			go func(j int, mode string) {
+			go func(j int) {
 				defer wg.Done()
-				statuses[j], _ = optionRequest(r, "POST", path+"/messages", gin.H{"message": "hello", "client_msg_id": uuid.NewString(), "mode": mode})
-			}(j, mode)
+				statuses[j], _ = optionRequest(r, "POST", path+"/messages", gin.H{"message": "hello", "client_msg_id": uuid.NewString()})
+			}(j)
 		}
 		wg.Wait()
-		if !(statuses[0] == 202 && statuses[1] == 409 || statuses[0] == 409 && statuses[1] == 202) {
+		if statuses[0] != 202 || statuses[1] != 202 {
 			t.Fatal(statuses)
 		}
-		s = expectOptions(t, r, 200, "GET", path, nil)
-		if s["mode_locked"] != true {
-			t.Fatal("race left session unlocked")
-		}
-		// A concurrent PATCH cannot change a preset already accepted by the queue.
-		opts := s["options"].(map[string]any)
-		if opts["mode"] == "standard" {
-			opts["mode"] = "ptc"
-		} else {
-			opts["mode"] = "standard"
-		}
-		expectOptions(t, r, 409, "PATCH", path, gin.H{"options": opts})
 	}
 }
 
@@ -149,8 +129,8 @@ func TestImageMessageOwnershipAndAdmission(t *testing.T) {
 		expectOptions(t, r, 400, "POST", path+"/messages", gin.H{"message": "", "client_msg_id": uuid.NewString(), "image_ids": ids})
 	}
 	state := expectOptions(t, r, 200, "GET", path, nil)
-	if state["mode_locked"] != false {
-		t.Fatal("invalid attachment locked preset")
+	if _, ok := state["options"].(map[string]any)["mode"]; ok {
+		t.Fatal("invalid attachment introduced mode", state)
 	}
 	result := expectOptions(t, r, 202, "POST", path+"/messages", gin.H{"message": "", "client_msg_id": uuid.NewString(), "image_ids": []string{img.ID}})
 	if result["content"] != "" || len(result["images"].([]any)) != 1 {

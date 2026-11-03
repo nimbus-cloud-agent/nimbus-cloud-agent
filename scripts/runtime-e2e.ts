@@ -65,14 +65,14 @@ async function until<T>(
 }
 const health = async () =>
   (await api<{ runtime: RuntimeState }>("/health")).runtime;
-async function create(mode = "standard", plan = false) {
+async function create(plan = false) {
   const s = await api<Session>("/sessions", {});
   ids.push(s.id);
   await api(
     `/sessions/${s.id}`,
     {
-      title: "常驻运行时验证 · " + mode,
-      options: { ...s.options, mode, plan },
+      title: "常驻运行时验证",
+      options: { ...s.options, plan },
     },
     "PATCH",
   );
@@ -171,7 +171,7 @@ try {
   const first = await health();
   assert.ok(first.pid);
   const a = await create(),
-    b = await create("ptc", true);
+    b = await create(true);
   await settled(
     a,
     await send(
@@ -252,7 +252,7 @@ try {
   console.log("PASS idle Node SIGKILL restarts without a new request");
   await api(
     `/sessions/${b.id}`,
-    { options: { ...b.options, mode: "ptc", plan: false } },
+    { options: { ...b.options, plan: false } },
     "PATCH",
   );
   const tools = await settled(
