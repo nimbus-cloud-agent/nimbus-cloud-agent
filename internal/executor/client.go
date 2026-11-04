@@ -87,10 +87,7 @@ func (r *Runtime) Check(ctx context.Context) error {
 	return nil
 }
 func (r *Runtime) Turn(ctx context.Context, input TurnInput, onEvent func(model.TurnEvent) error, onQuestion func(context.Context, model.QuestionRequest) (model.QuestionAnswer, error), onTool func(context.Context, model.ToolCall) (model.ToolResult, error)) error {
-	wire, err := turnRequest(input)
-	if err != nil {
-		return err
-	}
+	wire := turnRequest(input)
 	c, err := r.acquire(ctx)
 	if err != nil {
 		return err
@@ -119,14 +116,8 @@ func (r *Runtime) MCP(ctx context.Context, input MCPInput) (model.MCPResult, err
 	if err != nil {
 		return model.MCPResult{}, err
 	}
-	oauth, err := oauthRequest(input.OAuthData)
-	if err != nil {
-		return model.MCPResult{}, err
-	}
-	arguments, err := json.Marshal(input.Args.Arguments)
-	if err != nil {
-		return model.MCPResult{}, err
-	}
+	oauth := oauthRequest(input.OAuthData)
+	arguments := mustMarshal(input.Args.Arguments)
 	wire, err := c.client.Mcp(ctx, generated.MCPRequest{Op: generated.Op(input.Op), URL: input.URL, CallbackURL: input.CallbackURL, OauthData: &oauth, Args: &generated.MCPArguments{Name: optional(input.Args.Name), Code: optional(input.Args.Code), Arguments: arguments}})
 	if err != nil {
 		return model.MCPResult{}, err
