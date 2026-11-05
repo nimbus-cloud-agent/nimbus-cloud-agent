@@ -35,7 +35,7 @@ func (s *Server) routes(r *gin.Engine) {
 		c.JSON(200, out)
 	})
 	r.POST("/api/sessions", func(c *gin.Context) {
-		sess := model.Session{ID: uuid.NewString(), Title: "新对话", AgentState: "idle", SyncedSeq: -1, Options: model.DefaultOptions(), CreatedAt: time.Now(), LastActiveAt: time.Now()}
+		sess := model.Session{ID: uuid.NewString(), Title: "New chat", AgentState: "idle", SyncedSeq: -1, Options: model.DefaultOptions(), CreatedAt: time.Now(), LastActiveAt: time.Now()}
 		if e := s.S.CreateSession(c.Request.Context(), store.Session(sess)); e != nil {
 			s.fail(c, 500, e)
 			return
@@ -64,7 +64,7 @@ func (s *Server) routes(r *gin.Engine) {
 		if in.Title != nil {
 			t := strings.TrimSpace(*in.Title)
 			if t == "" {
-				s.fail(c, 400, fmt.Errorf("标题不能为空"))
+				s.fail(c, 400, fmt.Errorf("Chat title cannot be empty."))
 				return
 			}
 			title := string([]rune(t)[:min(len([]rune(t)), 100)])
@@ -112,7 +112,7 @@ func (s *Server) routes(r *gin.Engine) {
 			x = model.Session(row)
 			out, e := tx.Outbox(c.Request.Context(), c.Param("outbox"), x.ID)
 			if e != nil || out.Status != "failed" {
-				return fmt.Errorf("只有未送达的失败消息可以重发")
+				return fmt.Errorf("Only failed messages that were not delivered can be retried.")
 			}
 			if e := validOptions(out.Options); e != nil {
 				return e
@@ -195,7 +195,7 @@ func (s *Server) routes(r *gin.Engine) {
 		}
 		l := s.lock(x.ID)
 		if !l.TryLock() {
-			s.fail(c, 409, fmt.Errorf("沙箱正在执行操作，请稍后暂停"))
+				s.fail(c, 409, fmt.Errorf("The sandbox is busy. Try pausing it again later."))
 			return
 		}
 		defer l.Unlock()
@@ -206,7 +206,7 @@ func (s *Server) routes(r *gin.Engine) {
 			return
 		}
 		if x.AgentState != "idle" {
-			s.fail(c, 409, fmt.Errorf("请先停止当前轮次"))
+				s.fail(c, 409, fmt.Errorf("Stop the current turn before pausing the sandbox."))
 			return
 		}
 		if e := s.pause(c.Request.Context(), x.ID); e != nil {
@@ -226,7 +226,7 @@ func (s *Server) message(c *gin.Context) {
 		return
 	}
 	if _, deleting := s.deleting.Load(x.ID); deleting {
-		s.fail(c, 409, fmt.Errorf("会话正在删除"))
+			s.fail(c, 409, fmt.Errorf("Chat is being deleted."))
 		return
 	}
 	var in struct {
@@ -242,11 +242,11 @@ func (s *Server) message(c *gin.Context) {
 		return
 	}
 	if (strings.TrimSpace(in.Message) == "" && len(in.ImageIDs) == 0) || len(in.Message) > 100000 || in.ClientMsgID == "" || len(in.ClientMsgID) > 100 {
-		s.fail(c, 400, fmt.Errorf("请填写文字或添加图片；文字最多 100 KB，并需要 client_msg_id"))
+		s.fail(c, 400, fmt.Errorf("Enter a message or attach an image. Messages are limited to 100 KB and require a client_msg_id."))
 		return
 	}
 	if s.S.Get("deepseek_api_key", s.C.DeepSeekKey) == "" {
-		s.fail(c, 400, fmt.Errorf("请先在全局设置中填写 DeepSeek API key"))
+		s.fail(c, 400, fmt.Errorf("Add your DeepSeek API key in Settings first."))
 		return
 	}
 	var out model.Outbox
@@ -304,7 +304,7 @@ func (s *Server) deleteSession(c *gin.Context) {
 		return
 	}
 	if _, busy := s.deleting.LoadOrStore(x.ID, true); busy {
-		s.fail(c, 409, fmt.Errorf("会话正在删除"))
+		s.fail(c, 409, fmt.Errorf("Chat is being deleted."))
 		return
 	}
 	defer s.deleting.Delete(x.ID)

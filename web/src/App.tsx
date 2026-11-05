@@ -229,11 +229,11 @@ export default function App() {
   async function addImages(files: File[]) {
     if (!files.length) return;
     if (uploadPending.current || sending) {
-      setError("请等当前图片上传或消息提交完成");
+      setError("Wait for the current image upload or message to finish.");
       return;
     }
     if (draftImages.length + files.length > 4) {
-      setError("每条消息最多 4 张图片");
+      setError("You can attach up to 4 images to each message.");
       return;
     }
     if (
@@ -244,11 +244,11 @@ export default function App() {
           ),
       )
     ) {
-      setError("支持 PNG、JPEG、WebP 和 GIF 图片");
+      setError("Supported image formats are PNG, JPEG, WebP, and GIF.");
       return;
     }
     if (files.some((file) => file.size > 5 * 1024 * 1024)) {
-      setError("每张图片不能超过 5 MB");
+      setError("Each image must be 5 MB or smaller.");
       return;
     }
     if (
@@ -256,7 +256,7 @@ export default function App() {
         files.reduce((n, file) => n + file.size, 0) >
       10 * 1024 * 1024
     ) {
-      setError("每条消息图片总大小不能超过 10 MB");
+      setError("The total image size per message cannot exceed 10 MB.");
       return;
     }
     uploadPending.current = true;
@@ -268,7 +268,7 @@ export default function App() {
         const data = await new Promise<string>((resolve, reject) => {
           const reader = new FileReader();
           reader.onload = () => resolve(String(reader.result).split(",")[1]);
-          reader.onerror = () => reject(Error("图片读取失败"));
+          reader.onerror = () => reject(Error("Failed to read the image."));
           reader.readAsDataURL(file);
         });
         const image = await api<MessageImage>(
@@ -300,24 +300,24 @@ export default function App() {
   const suggestions = [
     {
       icon: <Code2 size={20} />,
-      title: "写一段代码",
-      desc: "编写脚本，并在沙箱里运行",
+      title: "Write some code",
+      desc: "Create a script and run it in the sandbox",
       prompt:
-        "请在沙箱里写一个 Python 数据分析示例，生成示例数据，运行分析脚本并告诉我结果和文件路径。",
+        "Write a Python data analysis example in the sandbox, generate sample data, run the script, and share the results and file path.",
     },
     {
       icon: <FileText size={20} />,
-      title: "处理一份数据",
-      desc: "清洗数据，生成分析结果",
+      title: "Analyze a dataset",
+      desc: "Clean data and generate insights",
       prompt:
-        "在沙箱里生成一份示例销售 CSV，完成去重和缺失值处理，按月份统计销售额并保存结果。",
+        "Create a sample sales CSV in the sandbox, remove duplicates and handle missing values, summarize sales by month, and save the results.",
     },
     {
       icon: <Compass size={20} />,
-      title: "探索云端环境",
-      desc: "查看环境，试一条命令",
+      title: "Explore the cloud environment",
+      desc: "Inspect the environment and try a command",
       prompt:
-        "请检查当前沙箱的 Linux、Python 和 Node 版本，展示工作目录，并简要介绍我可以让你做什么。",
+        "Check the Linux, Python, and Node versions in the current sandbox, show the working directory, and briefly explain what you can help me do.",
     },
   ];
   return (
@@ -329,24 +329,24 @@ export default function App() {
           </span>
           <strong>Nimbus</strong>
           <span className="brand-divider" />
-          <span>云端 Agent 工作台</span>
+          <span>Cloud Agent workspace</span>
         </div>
         <div className="top-actions">
           <span className="connection">
             <span className={"dot " + (online ? "online" : "")} />
-            {online ? "本地服务已连接" : "正在重新连接"}
+            {online ? "Connected to local service" : "Reconnecting…"}
           </span>
           <Button size="sm" variant="ghost" onPress={() => setSettings(true)}>
             <SettingsIcon size={18} />
-            全局设置
+            Settings
           </Button>
         </div>
       </header>
       <nav className="mobile-tabs">
         {[
-          ["sessions", "会话", <PanelLeft size={16} />],
-          ["chat", "对话", <MessageSquare size={16} />],
-          ["terminal", "终端", <TerminalSquare size={16} />],
+          ["sessions", "Sessions", <PanelLeft size={16} />],
+          ["chat", "Chat", <MessageSquare size={16} />],
+          ["terminal", "Terminal", <TerminalSquare size={16} />],
         ].map(([k, t, icon]) => (
           <Button
             key={String(k)}
@@ -365,7 +365,7 @@ export default function App() {
             isIconOnly
             size="sm"
             variant="ghost"
-            aria-label="关闭提示"
+            aria-label="Dismiss alert"
             onPress={() => setError("")}
           >
             <X size={14} />
@@ -375,7 +375,7 @@ export default function App() {
       <main className={"workspace show-" + tab}>
         <aside className="sidebar">
           <div className="sidebar-intro">
-            <span>我的工作空间</span>
+            <span>My workspace</span>
             <Layers3 size={16} />
           </div>
           <Button
@@ -384,19 +384,19 @@ export default function App() {
             onPress={newSession}
           >
             <Plus size={18} />
-            新建会话
+            New chat
           </Button>
           <div className="session-search">
             <Search size={17} />
             <Input
-              aria-label="搜索会话"
-              placeholder="搜索会话…"
+              aria-label="Search chats"
+              placeholder="Search chats…"
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
             />
           </div>
           <div className="sidebar-label">
-            <span>最近会话</span>
+            <span>Recent chats</span>
             <span>{sessions.length}</span>
           </div>
           <div className="session-list">
@@ -434,7 +434,7 @@ export default function App() {
                       {sandboxLabels[s.sandbox.state]}
                       <time>
                         {new Date(s.last_active_at).toLocaleDateString(
-                          "zh-CN",
+                          "en-US",
                           { month: "numeric", day: "numeric" },
                         )}
                       </time>
@@ -454,9 +454,9 @@ export default function App() {
               ))}
             {sessions.length === 0 && (
               <p className="empty-list">
-                每一个新任务，
+                Every new task
                 <br />
-                从一段新对话开始。
+                starts with a new conversation.
               </p>
             )}
           </div>
@@ -465,7 +465,7 @@ export default function App() {
               <Cloud size={19} />
             </span>
             <div>
-              <strong>本地工作空间</strong>
+              <strong>Local workspace</strong>
               <small>DeepSeek + E2B Cloud</small>
             </div>
           </div>
@@ -476,14 +476,14 @@ export default function App() {
               {rename !== null ? (
                 <div className="row">
                   <Input
-                    aria-label="会话标题"
+                    aria-label="Chat title"
                     value={rename}
                     onChange={(e) => setRename(e.target.value)}
                   />
                   <Button
                     isIconOnly
                     size="sm"
-                    aria-label="保存标题"
+                    aria-label="Save title"
                     onPress={() =>
                       api(`/sessions/${id}`, "PATCH", { title: rename })
                         .then(() => {
@@ -498,14 +498,14 @@ export default function App() {
               ) : (
                 <h1>
                   <span className="conversation-title" title={current?.title}>
-                    {current?.title ?? "开始新的可能"}
+                    {current?.title ?? "Start something new"}
                   </span>
                   {current && (
                     <Button
                       isIconOnly
                       size="sm"
                       variant="ghost"
-                      aria-label="重命名会话"
+                      aria-label="Rename chat"
                       onPress={() => setRename(current.title)}
                     >
                       <Pencil size={16} />
@@ -515,7 +515,7 @@ export default function App() {
               )}
               <p>
                 <span className="dot online" />
-                对话自动保存，沙箱按需运行
+                Chats are saved automatically. The sandbox runs on demand.
               </p>
             </div>
             <div className="row">
@@ -529,14 +529,14 @@ export default function App() {
                 onPress={() => setView(view === "chat" ? "trajectory" : "chat")}
               >
                 <Workflow size={17} />
-                {view === "chat" ? "执行轨迹" : "返回对话"}
+                {view === "chat" ? "Activity" : "Back to chat"}
               </Button>
               {current && (
                 <Button
                   isIconOnly
                   size="sm"
                   variant="ghost"
-                  aria-label="删除会话"
+                  aria-label="Delete chat"
                   onPress={() => setDeleteID(id)}
                 >
                   <Trash2 size={17} />
@@ -549,7 +549,7 @@ export default function App() {
               <span
                 className="model-label"
                 title="deepseek-flash"
-                aria-label="模型：DeepSeek Flash"
+                aria-label="Model: DeepSeek Flash"
               >
                 <Cloud size={16} />
                 DeepSeek Flash
@@ -562,12 +562,12 @@ export default function App() {
               />
               <div
                 className="thinking-control"
-                title="思考强度影响深度和耗时，下一轮生效"
+                title="Reasoning effort affects depth and response time. Changes apply to the next turn."
               >
                 <BrainCircuit size={16} />
-                <span>思考</span>
+                <span>Reasoning</span>
                 <Picker
-                  label="思考强度"
+                  label="Reasoning effort"
                   value={current.options.thinking}
                   values={["off", "low", "high", "max"].map((x) => [x, x])}
                   onChange={(v) => options({ thinking: v })}
@@ -594,11 +594,11 @@ export default function App() {
                 <div className="welcome-symbol">
                   <Cloud size={38} strokeWidth={1.5} />
                 </div>
-                <h2>把下一件事，交给 Nimbus。</h2>
+                <h2>Give Nimbus your next task.</h2>
                 <p>
-                  描述任务，一起把它完成。
+                  Describe what you need, and we’ll work through it together.
                   <br />
-                  写代码、分析数据、运行命令，都有独立的云端环境。
+                  Write code, analyze data, and run commands in a dedicated cloud environment.
                 </p>
                 <div className="suggestions">
                   {suggestions.map((s) => (
@@ -619,7 +619,7 @@ export default function App() {
                 </div>
                 <span className="welcome-note">
                   <span className="dot online" />
-                  先聊聊也可以，需要执行时再启动沙箱
+                  Start with a conversation. The sandbox starts when a task needs it.
                 </span>
               </div>
             ) : view === "trajectory" ? (
@@ -677,8 +677,8 @@ export default function App() {
                 }
               />
               <TextArea
-                aria-label="发送消息"
-                placeholder="发消息、粘贴图片，或描述你想完成的任务…"
+                aria-label="Send a message"
+                placeholder="Send a message, paste an image, or describe what you want to do…"
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
                 onPaste={(e) => {
@@ -711,18 +711,18 @@ export default function App() {
                     accept="image/png,image/jpeg,image/webp,image/gif"
                     multiple
                     hidden
-                    aria-label="选择图片"
+                    aria-label="Choose images"
                     onChange={(e) => {
                       void addImages(Array.from(e.target.files ?? []));
                       e.target.value = "";
                     }}
                   />
-                  <span title="添加图片，也可粘贴或拖入 · 最多 4 张，每张 5 MB">
+                  <span title="Attach images by selecting, pasting, or dropping them · Up to 4 images, 5 MB each">
                     <Button
                       isIconOnly
                       size="sm"
                       variant="ghost"
-                      aria-label="添加图片"
+                      aria-label="Attach images"
                       isPending={uploadingImages}
                       isDisabled={sending}
                       onPress={() => imageInput.current?.click()}
@@ -738,12 +738,12 @@ export default function App() {
                       }
                     />
                     {draggingImage
-                      ? "松开添加图片"
+                      ? "Release to attach images"
                       : uploadingImages
-                        ? "图片上传中…"
+                        ? "Uploading images…"
                         : current?.sandbox.state === "running"
-                          ? "已连接专属沙箱"
-                          : "沙箱按需启动"}
+                          ? "Connected to your sandbox"
+                          : "Sandbox starts on demand"}
                   </span>
                 </div>
                 <div className="row">
@@ -758,12 +758,12 @@ export default function App() {
                       }
                     >
                       <Square size={12} />
-                      停止
+                      Stop
                     </Button>
                   )}
                   <Button
                     isIconOnly
-                    aria-label="发送"
+                    aria-label="Send"
                     variant="primary"
                     className="send-button"
                     isDisabled={
@@ -779,10 +779,10 @@ export default function App() {
             </div>
             <div className="composer-note">
               <span>
-                <kbd>Enter</kbd> 发送 <kbd>Shift + Enter</kbd> 换行
+                <kbd>Enter</kbd> to send <kbd>Shift + Enter</kbd> for a new line
               </span>
               <span>
-                {"工具通过 Wasm PTC 执行"}
+                {"Tools run through Wasm PTC"}
               </span>
             </div>
           </div>
@@ -806,14 +806,14 @@ export default function App() {
             <Modal.Dialog>
               <Modal.CloseTrigger />
               <Modal.Header>
-                <Modal.Heading>删除会话？</Modal.Heading>
+                <Modal.Heading>Delete this chat?</Modal.Heading>
               </Modal.Header>
               <Modal.Body>
-                <p>这会销毁专属沙箱和全部对话历史，无法恢复。</p>
+                <p>This permanently deletes the dedicated sandbox and the entire chat history.</p>
               </Modal.Body>
               <Modal.Footer>
                 <Button variant="secondary" onPress={() => setDeleteID("")}>
-                  取消
+                  Cancel
                 </Button>
                 <Button
                   variant="danger"
@@ -836,7 +836,7 @@ export default function App() {
                       .catch((e) => setError(e.message))
                   }
                 >
-                  确认删除
+                  Delete chat
                 </Button>
               </Modal.Footer>
             </Modal.Dialog>

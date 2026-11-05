@@ -51,15 +51,15 @@ async function turn(s, message, opts = {}) {
   throw Error("turn timed out");
 }
 const s = await api("/sessions", {});
-await api(`/sessions/${s.id}`, { title: "端到端验证 · E2B 工作区" }, "PATCH");
+await api(`/sessions/${s.id}`, { title: "E2E verification · E2B workspace" }, "PATCH");
 await writeFile(".local/e2e-session.json", JSON.stringify(s));
 assert.equal(s.sandbox.state, "not_started");
-await turn(s, "请只回复“连接成功”，不要使用工具。");
+await turn(s, 'Reply only with "Connected". Do not use tools.');
 assert.equal((await api(`/sessions/${s.id}`)).sandbox.state, "not_started");
 console.log("PASS pure chat does not create sandbox");
 const d = await turn(
   s,
-  "请使用工具在 /workspace/nimbus-proof.txt 写入字符串 NIMBUS_E2B_OK，然后执行 cat /workspace/nimbus-proof.txt 和 python3 --version，告诉我真实输出。",
+  "Use tools to write NIMBUS_E2B_OK to /workspace/nimbus-proof.txt, then run cat /workspace/nimbus-proof.txt and python3 --version. Report the actual output.",
 );
 const sb = (await api(`/sessions/${s.id}`)).sandbox;
 assert.equal(sb.state, "running");
@@ -121,7 +121,7 @@ const ptcSession = await api("/sessions", {});
 try {
   const ptc = await turn(
     ptcSession,
-    "请使用 run_code 工具调用 tools.sandbox_exec 执行 printf NIMBUS_PTC_OK，打印输出。",
+    "Use the run_code tool to call tools.sandbox_exec and run printf NIMBUS_PTC_OK. Print the output.",
     { model: "deepseek-flash", thinking: "off", plan: false },
   );
   assert.ok(

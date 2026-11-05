@@ -20,14 +20,14 @@ import { toolFailed, type ToolNode } from "./tool-events";
 
 function toolInfo(node: ToolNode) {
   const labels: Record<string, [string, typeof Cloud]> = {
-    sandbox_start: ["启动沙箱", Cloud],
-    sandbox_status: ["沙箱状态", Cloud],
-    sandbox_exec: ["运行命令", TerminalSquare],
-    sandbox_read_file: ["读取文件", FileText],
-    sandbox_write_file: ["写入文件", FilePenLine],
-    skill_read: ["读取技能", BookOpen],
-    run_code: ["运行代码", Braces],
-    exit_plan_mode: ["计划评审", FileText],
+    sandbox_start: ["Start sandbox", Cloud],
+    sandbox_status: ["Sandbox status", Cloud],
+    sandbox_exec: ["Run command", TerminalSquare],
+    sandbox_read_file: ["Read file", FileText],
+    sandbox_write_file: ["Write file", FilePenLine],
+    skill_read: ["Read skill", BookOpen],
+    run_code: ["Run code", Braces],
+    exit_plan_mode: ["Plan review", FileText],
   };
   const shortName = node.name.startsWith("mcp__")
     ? node.name.split("__").slice(2).join("__")
@@ -67,7 +67,7 @@ function CodeSection({
           size="sm"
           variant="ghost"
           isIconOnly
-          aria-label={"复制" + label}
+          aria-label={"Copy " + label}
           onPress={async () => {
             try {
               await navigator.clipboard.writeText(value);
@@ -84,7 +84,7 @@ function CodeSection({
       <pre tabIndex={0}>{value}</pre>
       {copyError && (
         <span role="status" className="tool-copy-error">
-          复制失败，请选择内容手动复制
+          Copy failed. Select the text and copy it manually.
         </span>
       )}
     </section>
@@ -93,34 +93,34 @@ function CodeSection({
 function Output({ node }: { node: ToolNode }) {
   if (node.result === undefined)
     return node.output ? (
-      <CodeSection label="实时输出" value={node.output} />
+      <CodeSection label="Live output" value={node.output} />
     ) : null;
   const result = node.result;
   if (result.command) {
     const value = result.command;
     return (
       <>
-        {value.stdout && <CodeSection label="输出" value={value.stdout} />}
-        {value.stderr && (
-          <CodeSection label="标准错误" value={value.stderr} error />
+        {value.stdout && <CodeSection label="Output" value={value.stdout} />}
+          {value.stderr && (
+          <CodeSection label="Standard error" value={value.stderr} error />
         )}
         <div className="tool-result-meta">
-          {value.exitCode !== undefined && <span>退出码 {value.exitCode}</span>}
-          {value.truncated && <span>输出已截断</span>}
+          {value.exitCode !== undefined && <span>Exit code {value.exitCode}</span>}
+          {value.truncated && <span>Output truncated</span>}
         </div>
       </>
     );
   }
   if (result.fileContent !== undefined)
-    return <CodeSection label="文件内容" value={result.fileContent} />;
+    return <CodeSection label="File contents" value={result.fileContent} />;
   return result.text ? (
     <CodeSection
-      label={result.failed ? "错误" : "结果"}
+      label={result.failed ? "Error" : "Result"}
       value={result.formatted}
       error={result.failed}
     />
   ) : (
-    <p className="tool-empty-result">工具执行完成，无文本输出。</p>
+    <p className="tool-empty-result">The tool completed without text output.</p>
   );
 }
 
@@ -147,11 +147,11 @@ export function ToolCall({
           ? "stopped"
           : "running";
   const status = {
-    error: "失败",
-    done: "完成",
-    waiting: "待确认",
-    stopped: "已中断",
-    running: "执行中",
+    error: "Failed",
+    done: "Completed",
+    waiting: "Awaiting approval",
+    stopped: "Interrupted",
+    running: "Running",
   }[state];
   const duration =
     node.time != null && node.ended != null
@@ -169,7 +169,7 @@ export function ToolCall({
             <span className="tool-row-summary" title={detail}>
               {detail ||
                 (node.children.length
-                  ? `${node.children.length} 个子调用`
+                  ? `${node.children.length} child calls`
                   : "")}
             </span>
             <span className="tool-row-state" title={status}>
@@ -199,20 +199,20 @@ export function ToolCall({
               <CodeSection label="TypeScript" value={node.args.code} />
             ) : node.name === "sandbox_exec" && node.args.command ? (
               <>
-                <CodeSection label="命令" value={node.args.command} />
+                <CodeSection label="Command" value={node.args.command} />
                 {node.args.cwd && (
-                  <p className="tool-result-meta">目录 {node.args.cwd}</p>
+                  <p className="tool-result-meta">Directory: {node.args.cwd}</p>
                 )}
               </>
             ) : node.name === "sandbox_write_file" ? (
-              <CodeSection label="写入内容" value={node.args.content ?? ""} />
+              <CodeSection label="Written content" value={node.args.content ?? ""} />
             ) : node.name === "sandbox_read_file" ? null : (
-              <CodeSection label="参数" value={node.args.formatted} />
+              <CodeSection label="Arguments" value={node.args.formatted} />
             )}
             {node.children.length > 0 && (
-              <div className="tool-children" aria-label="子工具调用">
+              <div className="tool-children" aria-label="Child tool calls">
                 <div className="tool-children-label">
-                  子调用 <span>{node.children.length}</span>
+                  Child calls <span>{node.children.length}</span>
                 </div>
                 {node.children.map((child) => (
                   <ToolCall
@@ -227,7 +227,7 @@ export function ToolCall({
             <Output node={node} />
             {state === "stopped" && (
               <p className="tool-empty-result">
-                执行已中断，没有收到工具结果。
+                Execution interrupted before a tool result was received.
               </p>
             )}
           </div>
@@ -255,16 +255,16 @@ export function ExecutionProcess({
   const failures = tools.filter(toolFailed).length;
   const seconds = Math.round(duration ?? 0);
   const title = waiting
-    ? "等待计划确认"
+    ? "Waiting for plan approval"
     : !outcome
-      ? "正在执行"
+      ? "In progress"
       : outcome === "interrupted"
-        ? "执行已中断"
-        : "执行过程";
+        ? "Execution interrupted"
+        : "Execution details";
   return (
     <Fold
       className="execution-process"
-      label={`${title}，${tools.length} 次调用${failures ? `，${failures} 项失败` : ""}`}
+      label={`${title}, ${tools.length} calls${failures ? `, ${failures} failed` : ""}`}
       open={open}
       onOpenChange={setManualOpen}
       title={
@@ -275,15 +275,15 @@ export function ExecutionProcess({
             <Workflow size={15} />
           )}
           <span>{title}</span>
-          <span className="process-count">{tools.length} 次调用</span>
+          <span className="process-count">{tools.length} calls</span>
           {failures > 0 && (
-            <span className="process-errors">{failures} 项失败</span>
+            <span className="process-errors">{failures} failed</span>
           )}
           {duration != null && outcome && (
             <span className="process-duration">
               {duration < 60
-                ? `${duration.toFixed(1)} 秒`
-                : `${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒`}
+                ? `${duration.toFixed(1)}s`
+                : `${Math.floor(seconds / 60)}m ${seconds % 60}s`}
             </span>
           )}
         </span>

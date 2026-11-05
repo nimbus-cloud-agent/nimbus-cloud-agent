@@ -81,7 +81,7 @@ export default function Settings({
   }, [open]);
   async function run(
     fn: () => Promise<unknown>,
-    message = "已保存，下轮对话生效",
+    message = "Saved. Changes take effect in the next conversation.",
   ) {
     setBusy(true);
     setFailure("");
@@ -101,17 +101,17 @@ export default function Settings({
     const files = [];
     try {
       for (const f of Array.from(list)) {
-        if (f.size > 5242880) throw Error(`${f.name} 超过 5 MB`);
+        if (f.size > 5242880) throw Error(`${f.name} exceeds 5 MB.`);
         const bytes = await f.arrayBuffer();
         const content = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-        if (content.includes("\0")) throw Error(`${f.name} 不是文本文件`);
+        if (content.includes("\0")) throw Error(`${f.name} is not a text file.`);
         files.push({ path: f.webkitRelativePath || f.name, content });
       }
       const merged = [
         ...edit.files.filter((f) => f.content || f.path !== "SKILL.md"),
         ...files,
       ];
-      if (merged.length > 100) throw Error("每个 Skill 最多 100 个文件");
+      if (merged.length > 100) throw Error("Each skill can contain up to 100 files.");
       setEdit({ ...edit, files: merged });
       setFile(0);
     } catch (e) {
@@ -130,17 +130,17 @@ export default function Settings({
           <Modal.Dialog>
             <Modal.CloseTrigger />
             <Modal.Header>
-              <Modal.Heading>全局设置</Modal.Heading>
+              <Modal.Heading>Settings</Modal.Heading>
               <p className="muted">
-                配置你的云端工作空间。修改会从下一轮开始生效。
+                Configure your cloud workspace. Changes take effect in the next turn.
               </p>
             </Modal.Header>
             <Modal.Body>
               <div className="settings-tabs">
                 {[
-                  ["model", "模型与沙箱", <KeyRound size={15} />],
+                  ["model", "Model & Sandbox", <KeyRound size={15} />],
                   ["skills", "Skills", <BookOpen size={15} />],
-                  ["mcp", "MCP 服务", <Plug size={15} />],
+                  ["mcp", "MCP Servers", <Plug size={15} />],
                 ].map(([id, name, icon]) => (
                   <Button
                     key={String(id)}
@@ -171,13 +171,13 @@ export default function Settings({
                 <div className="settings-section">
                   <h3>
                     <KeyRound size={17} />
-                    DeepSeek 模型
+                    DeepSeek model
                   </h3>
                   <Label>
                     API Key{" "}
                     {configured && (
                       <Chip size="sm" variant="soft">
-                        已配置
+                        Configured
                       </Chip>
                     )}
                   </Label>
@@ -186,38 +186,38 @@ export default function Settings({
                     type="password"
                     value={key}
                     placeholder={
-                      configured ? "已安全保存 · 输入新的 key 以替换" : "sk-…"
+                      configured ? "Saved securely · Enter a new key to replace it" : "sk-…"
                     }
                     onChange={(e) => setKey(e.target.value)}
                   />
                   <p className="muted">
-                    密钥只保存在服务端，页面不会返回完整内容。
+                    Keys are stored on the server. Their full values are never sent to this page.
                   </p>
                   <h3>
                     <Cloud size={17} />
-                    E2B 云端沙箱
+                    E2B cloud sandbox
                   </h3>
-                  <Label>沙箱模板</Label>
+                  <Label>Sandbox template</Label>
                   <Input
-                    aria-label="E2B 模板"
+                    aria-label="E2B template"
                     value={template}
                     onChange={(e) => setTemplate(e.target.value)}
                   />
                   <p className="muted">
-                    仅影响后续创建的沙箱。已有沙箱保持原有环境。
+                    Applies only to new sandboxes. Existing sandboxes keep their current environment.
                   </p>
                   <div className="settings-facts">
                     <span>
                       E2B API Key{" "}
                       <Chip size="sm" variant="soft">
-                        启动时配置
+                        Configure at startup
                       </Chip>
                     </span>
                     <span>
-                      闲置自动暂停 <strong>15 分钟</strong>
+                      Auto-pause after <strong>15 minutes</strong> of inactivity
                     </span>
                     <span>
-                      单次运行窗口 <strong>1 小时</strong>
+                      Maximum runtime <strong>1 hour</strong>
                     </span>
                   </div>
                   <Button
@@ -233,14 +233,14 @@ export default function Settings({
                       })
                     }
                   >
-                    保存设置
+                    Save settings
                   </Button>
                 </div>
               )}
               {tab === "skills" && (
                 <div className="settings-section">
                   <div className="row between">
-                    <h3>你的技能库</h3>
+                    <h3>Your skills</h3>
                     <Button
                       size="sm"
                       variant="secondary"
@@ -250,16 +250,15 @@ export default function Settings({
                       }}
                     >
                       <Plus size={14} />
-                      安装 Skill
+                      Add skill
                     </Button>
                   </div>
                   <p className="muted">
-                    内容保存在数据库，Agent 按需读取。每个 Skill 最多 100
-                    个文本文件，单文件 ≤ 5 MB。
+                    Skills are stored in the database and loaded by the agent when needed. Each skill can contain up to 100 text files, with a 5 MB limit per file.
                   </p>
                   {skills.length === 0 && !edit && (
                     <p className="settings-empty">
-                      还没有 Skill。添加常用的工作方法，让 Agent 更懂你的任务。
+                      No skills yet. Add reusable workflows to help the agent with your tasks.
                     </p>
                   )}
                   {skills.map((s) => (
@@ -267,12 +266,12 @@ export default function Settings({
                       <div>
                         <strong>{s.name}</strong>
                         <small>
-                          {s.files.length} 个文件 · {s.description || "无描述"}
+                          {s.files.length} files · {s.description || "No description"}
                         </small>
                       </div>
                       <div className="row">
                         <Toggle
-                          label="启用"
+                          label="Enabled"
                           value={s.enabled}
                           onChange={(v) =>
                             run(() =>
@@ -291,17 +290,17 @@ export default function Settings({
                             setFile(0);
                           }}
                         >
-                          编辑
+                          Edit
                         </Button>
                         <Button
                           isIconOnly
                           size="sm"
                           variant="ghost"
-                          aria-label={"删除 Skill " + s.name}
+                          aria-label={"Delete skill " + s.name}
                           onPress={() =>
                             run(
                               () => api("/skills/" + s.id, "DELETE"),
-                              "Skill 已删除",
+                              "Skill deleted",
                             )
                           }
                         >
@@ -312,32 +311,32 @@ export default function Settings({
                   ))}
                   {edit && (
                     <div className="skill-editor">
-                      <Label>技能名称</Label>
+                      <Label>Skill name</Label>
                       <Input
-                        aria-label="Skill 名称"
+                        aria-label="Skill name"
                         value={edit.name}
                         onChange={(e) =>
                           setEdit({ ...edit, name: e.target.value })
                         }
-                        placeholder="例如 data-cleaning"
+                        placeholder="e.g. data-cleaning"
                       />
-                      <Label>描述</Label>
+                      <Label>Description</Label>
                       <Input
-                        aria-label="Skill 描述"
+                        aria-label="Skill description"
                         value={edit.description}
                         onChange={(e) =>
                           setEdit({ ...edit, description: e.target.value })
                         }
-                        placeholder="适用场景与用途"
+                        placeholder="When to use this skill and what it does"
                       />
                       <div className="row between">
-                        <Label>文件 ({edit.files.length}/100)</Label>
+                        <Label>Files ({edit.files.length}/100)</Label>
                         <Button
                           size="sm"
                           variant="ghost"
                           onPress={() => {
                             if (edit.files.length >= 100) {
-                              setFailure("最多 100 个文件");
+                              setFailure("A skill can contain up to 100 files.");
                               return;
                             }
                             setEdit({
@@ -354,11 +353,11 @@ export default function Settings({
                           }}
                         >
                           <Plus size={13} />
-                          添加文件
+                          Add file
                         </Button>
                       </div>
                       <Input
-                        aria-label="上传 Skill 文本文件"
+                        aria-label="Upload skill text files"
                         type="file"
                         multiple
                         onChange={(e) => upload(e.target.files)}
@@ -378,7 +377,7 @@ export default function Settings({
                       {edit.files[file] && (
                         <>
                           <Input
-                            aria-label="文件路径"
+                            aria-label="File path"
                             value={edit.files[file].path}
                             onChange={(e) =>
                               setEdit({
@@ -392,7 +391,7 @@ export default function Settings({
                             }
                           />
                           <TextArea
-                            aria-label="Skill 文件内容"
+                            aria-label="Skill file contents"
                             rows={10}
                             value={edit.files[file].content}
                             onChange={(e) =>
@@ -423,10 +422,10 @@ export default function Settings({
                             })
                           }
                         >
-                          保存 Skill
+                          Save skill
                         </Button>
                         <Button variant="ghost" onPress={() => setEdit(null)}>
-                          取消
+                          Cancel
                         </Button>
                         {edit.files.length > 1 && (
                           <Button
@@ -440,7 +439,7 @@ export default function Settings({
                               setFile(0);
                             }}
                           >
-                            移除当前文件
+                            Remove current file
                           </Button>
                         )}
                       </div>
@@ -451,7 +450,7 @@ export default function Settings({
               {tab === "mcp" && (
                 <div className="settings-section">
                   <div className="row between">
-                    <h3>连接外部工具</h3>
+                    <h3>Connect external tools</h3>
                     <Button
                       size="sm"
                       variant="secondary"
@@ -460,17 +459,16 @@ export default function Settings({
                       }
                     >
                       <Plus size={14} />
-                      添加 MCP
+                      Add MCP server
                     </Button>
                   </div>
                   <p className="muted">
-                    仅支持 Streamable HTTP。需要登录的服务通过 OAuth
-                    授权，凭据由服务端保存和刷新。
-                    “已授权”表示已保存登录凭据；点击“测试”检查工具是否可用，连接变更在下一轮对话生效。
+                    Streamable HTTP only. Services that require sign-in use OAuth; credentials are stored and refreshed by the server.
+                    “Authorized” means sign-in credentials are saved. Select “Test” to check whether the tools are available. Connection changes take effect in the next conversation.
                   </p>
                   {mcps.length === 0 && !mcpEdit && (
                     <p className="settings-empty">
-                      连接你的文档、知识库或其他工具。
+                      Connect your documents, knowledge bases, and other tools.
                     </p>
                   )}
                   {mcps.map((m) => (
@@ -481,10 +479,10 @@ export default function Settings({
                           <Chip size="sm" variant="soft">
                             {
                               {
-                                none: "未授权",
-                                ok: "已授权",
-                                pending: "等待授权",
-                                expired: "需要重新授权",
+                                none: "Not authorized",
+                                ok: "Authorized",
+                                pending: "Authorization pending",
+                                expired: "Reauthorization required",
                               }[m.oauth_state]
                             }
                           </Chip>
@@ -493,7 +491,7 @@ export default function Settings({
                       </div>
                       <div className="row wrap">
                         <Toggle
-                          label="启用"
+                          label="Enabled"
                           value={m.enabled}
                           onChange={(v) =>
                             run(() =>
@@ -513,11 +511,11 @@ export default function Settings({
                                 `/mcp/servers/${m.id}/test`,
                                 "POST",
                               );
-                              return `连接成功 · ${r.tools?.length ?? 0} 个工具`;
-                            }, "连通性检查成功")
+                              return `Connected · ${r.tools?.length ?? 0} tools`;
+                            }, "Connection test passed")
                           }
                         >
-                          测试
+                          Test
                         </Button>
                         <Button
                           size="sm"
@@ -529,28 +527,28 @@ export default function Settings({
                                 "POST",
                               );
                               if (r.auth_url) location.assign(r.auth_url);
-                            }, "授权已更新")
+                            }, "Authorization updated")
                           }
                         >
                           <ExternalLink size={13} />
-                          授权
+                          Authorize
                         </Button>
                         <Button
                           size="sm"
                           variant="ghost"
                           onPress={() => setMcpEdit({ ...m })}
                         >
-                          编辑
+                          Edit
                         </Button>
                         <Button
                           isIconOnly
                           size="sm"
                           variant="ghost"
-                          aria-label={"删除 MCP " + m.name}
+                          aria-label={"Delete MCP server " + m.name}
                           onPress={() =>
                             run(
                               () => api("/mcp/servers/" + m.id, "DELETE"),
-                              "MCP 已删除",
+                              "MCP server deleted",
                             )
                           }
                         >
@@ -561,15 +559,15 @@ export default function Settings({
                   ))}
                   {mcpEdit && (
                     <div className="skill-editor">
-                      <Label>服务名称</Label>
+                      <Label>Server name</Label>
                       <Input
-                        aria-label="MCP 名称"
+                        aria-label="MCP server name"
                         value={mcpEdit.name}
                         onChange={(e) =>
                           setMcpEdit({ ...mcpEdit, name: e.target.value })
                         }
                       />
-                      <Label>HTTP 服务地址</Label>
+                      <Label>HTTP server URL</Label>
                       <Input
                         aria-label="MCP URL"
                         value={mcpEdit.url}
@@ -594,13 +592,13 @@ export default function Settings({
                             })
                           }
                         >
-                          保存 MCP
+                          Save MCP server
                         </Button>
                         <Button
                           variant="ghost"
                           onPress={() => setMcpEdit(null)}
                         >
-                          取消
+                          Cancel
                         </Button>
                       </div>
                     </div>
@@ -609,9 +607,9 @@ export default function Settings({
               )}
             </Modal.Body>
             <Modal.Footer>
-              <span className="muted">单用户工作空间 · 你就是管理员</span>
+              <span className="muted">Single-user workspace · You are the admin</span>
               <Button variant="secondary" onPress={onClose}>
-                完成
+                Done
               </Button>
             </Modal.Footer>
           </Modal.Dialog>

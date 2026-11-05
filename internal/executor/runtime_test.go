@@ -64,7 +64,7 @@ func TestRPCMultiplexAndBackpressure(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			text := fmt.Sprint(i) + strings.Repeat("大", 600000)
+			text := fmt.Sprint(i) + strings.Repeat("é", 600000)
 			result, err := echo(r, ctx, text)
 			if err != nil {
 				t.Error(err)

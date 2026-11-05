@@ -53,7 +53,7 @@ func TestCaptureLimitsCombinedOutputAndCancelsOnConsumerFailure(t *testing.T) {
 	defer cancel()
 	c := capture{cancel: cancel}
 	c.take("stdout", []byte(strings.Repeat("a", outputLimit-2)))
-	c.take("stderr", []byte("中文"))
+	c.take("stderr", []byte("café"))
 	if !c.result.Truncated || len(c.result.Stdout)+len(c.result.Stderr) > outputLimit || !utf8.ValidString(c.result.Stderr) {
 		t.Fatal("invalid truncated output")
 	}

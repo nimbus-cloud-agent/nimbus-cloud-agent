@@ -22,7 +22,7 @@ func (s *Server) terminal(c *gin.Context) {
 	}
 	sb, err := s.getSandbox(c.Request.Context(), sess.ID)
 	if err != nil || sb.State != "running" {
-		c.JSON(409, gin.H{"error": "请先启动沙箱"})
+		c.JSON(409, gin.H{"error": "Start the sandbox first."})
 		return
 	}
 	log := logging.FromContext(c.Request.Context()).With("session_id", sess.ID, "sandbox_id", sb.E2bSandboxID)

@@ -68,7 +68,7 @@ for (const [key, file] of [
       if (error.code !== "ENOENT") throw error;
       if (key === "NIMBUS_E2B_API_KEY")
         throw Error(
-          "请设置 NIMBUS_E2B_API_KEY 或把 E2B key 写入 e2bhobbykey 文件。",
+          "Set NIMBUS_E2B_API_KEY or add the E2B key to the e2bhobbykey file.",
         );
     }
   }

@@ -1,4 +1,4 @@
 interface:
-  display_name: "Nimbus Coolify 备用运维"
-  short_description: "查看 Nimbus 的 Coolify 备用 dev 部署、配置和日志，按需发布"
-  default_prompt: "使用 $nimbus-coolify-ops 检查 Nimbus 的 Coolify 备用部署状态、配置或日志。"
+  display_name: "Nimbus Coolify Backup Operations"
+  short_description: "Inspect Nimbus's backup Coolify dev deployment, configuration, and logs; deploy when requested"
+  default_prompt: "Use $nimbus-coolify-ops to inspect Nimbus's backup Coolify deployment, configuration, or logs."

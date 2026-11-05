@@ -56,25 +56,25 @@ export default function PlanReview({
     }
   }
   const status = pending
-    ? "请确认这份计划"
+    ? "Review and approve this plan"
     : approved
-      ? "已批准计划"
+      ? "Plan approved"
       : review.status === "answered"
-        ? "已退回修改"
+        ? "Changes requested"
         : review.status === "dismissed"
-          ? "暂未批准 · 仍在 Plan 模式"
-          : "评审已中断 · 发送消息可重新提交计划";
+          ? "Not approved · Plan mode is still active"
+          : "Review interrupted · Send a message to submit a new plan";
   return (
     <section
       className={"plan-review" + (pending ? " is-pending" : "")}
-      aria-label="计划评审"
+      aria-label="Plan review"
     >
       <header className="plan-review-header">
         <FileText size={18} />
         <strong>{status}</strong>
       </header>
       <details open={pending} className="plan-review-detail">
-        <summary>计划内容</summary>
+        <summary>Plan</summary>
         <div className="plan-review-document">
           {review.questions.map((q) => (
             <Rich key={q.id}>{q.detail ?? q.question}</Rich>
@@ -85,22 +85,22 @@ export default function PlanReview({
         (a) =>
           a.custom && (
             <p key={a.id} className="plan-review-feedback">
-              修改意见：{a.custom}
+              Feedback: {a.custom}
             </p>
           ),
       )}
       {pending && (
         <div className="plan-review-controls">
-          <p>批准后退出 Plan 模式，Agent 将按计划继续执行。</p>
+          <p>Approving exits Plan mode and lets the agent continue with the plan.</p>
           {editing && (
             <label className="plan-review-edit">
-              修改意见（可选）
+              Feedback (optional)
               <textarea
                 autoFocus
                 value={feedback}
                 onChange={(e) => setFeedback(e.target.value)}
                 maxLength={6000}
-                placeholder="说明需要调整的内容…"
+                placeholder="Describe what you would like changed…"
                 disabled={busy || sent}
               />
             </label>
@@ -113,7 +113,7 @@ export default function PlanReview({
                 onPress={() => answer("approve")}
               >
                 <Check size={15} />
-                批准并执行
+                Approve and continue
               </Button>
             )}
             <Button
@@ -123,7 +123,7 @@ export default function PlanReview({
               onPress={() => (editing ? answer("revise") : setEditing(true))}
             >
               <MessageSquare size={15} />
-              {editing ? "提交修改意见" : "继续规划"}
+              {editing ? "Submit feedback" : "Request changes"}
             </Button>
             {editing && (
               <Button
@@ -132,7 +132,7 @@ export default function PlanReview({
                 isDisabled={busy || sent}
                 onPress={() => setEditing(false)}
               >
-                取消修改
+                Cancel
               </Button>
             )}
             <Button
@@ -142,10 +142,10 @@ export default function PlanReview({
               onPress={() => answer("dismiss")}
             >
               <Pause size={14} />
-              暂不决定
+              Decide later
             </Button>
           </div>
-          {sent && <p role="status">已提交，等待 Agent 继续…</p>}
+          {sent && <p role="status">Submitted. Waiting for the agent…</p>}
           {error && (
             <p className="plan-review-error" role="alert">
               {error}

@@ -34,17 +34,17 @@ func (s *Server) imageRoutes(r *gin.Engine) {
 		}
 		data, err := base64.StdEncoding.Strict().DecodeString(in.Data)
 		if err != nil || len(data) == 0 || len(data) > 5<<20 {
-			s.fail(c, 400, fmt.Errorf("图片编码无效或超过 5 MB"))
+			s.fail(c, 400, fmt.Errorf("Invalid image encoding or image exceeds 5 MB."))
 			return
 		}
 		media := http.DetectContentType(data)
 		if !strings.Contains("|image/png|image/jpeg|image/gif|image/webp|", "|"+media+"|") || media != in.MediaType {
-			s.fail(c, 400, fmt.Errorf("请选择有效的 PNG、JPEG、WebP 或 GIF 图片"))
+			s.fail(c, 400, fmt.Errorf("Choose a valid PNG, JPEG, WebP, or GIF image."))
 			return
 		}
 		name := filepath.Base(strings.ReplaceAll(in.Name, "\\", "/"))
 		if name == "." || name == "/" || strings.TrimSpace(name) == "" {
-			name = "图片"
+			name = "image"
 		}
 		name = string([]rune(name)[:min(len([]rune(name)), 120)])
 		// Normalize using the same native attachment service the provider consumes.
@@ -59,11 +59,11 @@ func (s *Server) imageRoutes(r *gin.Engine) {
 		defer cancel()
 		result, err := s.R.Images(ctx, executor.ImageRequest{WorkDir: dir, Name: name, MediaType: media, Data: in.Data})
 		if err != nil {
-			s.fail(c, 400, fmt.Errorf("图片无法读取：%s", err))
+			s.fail(c, 400, fmt.Errorf("Could not read image: %s", err))
 			return
 		}
 		if len(result.Data) == 0 {
-			s.fail(c, 500, fmt.Errorf("图片处理失败"))
+			s.fail(c, 500, fmt.Errorf("Failed to process image."))
 			return
 		}
 		img := model.Image{ID: uuid.NewString(), SessionID: sess.ID, Ref: result.Ref, Data: result.Data}
@@ -96,26 +96,26 @@ func imageView(img model.Image) model.MessageImage {
 }
 func messageImages(ctx context.Context, tx *store.Store, sid string, ids []string) ([]model.MessageImage, error) {
 	if len(ids) > 4 {
-		return nil, fmt.Errorf("每条消息最多 4 张图片")
+		return nil, fmt.Errorf("Each message can include up to 4 images.")
 	}
 	images := make([]model.MessageImage, 0, len(ids))
 	seen := map[string]bool{}
 	var total int64
 	for _, id := range ids {
 		if _, err := uuid.Parse(id); err != nil || seen[id] {
-			return nil, fmt.Errorf("图片 ID 无效或重复")
+			return nil, fmt.Errorf("Invalid or duplicate image ID.")
 		}
 		seen[id] = true
 		row, err := tx.ImageMetadata(ctx, sid, id)
 		if err != nil {
-			return nil, fmt.Errorf("图片不属于当前会话，请重新上传: %w", err)
+			return nil, fmt.Errorf("Image does not belong to this chat; upload it again: %w", err)
 		}
 		img := model.Image(row)
 		total += img.Ref.Bytes
 		images = append(images, imageView(img))
 	}
 	if total > 10<<20 {
-		return nil, fmt.Errorf("每条消息图片总大小不能超过 10 MB")
+		return nil, fmt.Errorf("The total image size per message cannot exceed 10 MB.")
 	}
 	return images, nil
 }

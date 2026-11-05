@@ -8,7 +8,7 @@ import (
 )
 
 func TestSkillValidation(t *testing.T) {
-	valid := model.Skill{Name: "data-cleaning", Files: []model.SkillFile{{Path: "SKILL.md", Content: "hello 世界"}}}
+	valid := model.Skill{Name: "data-cleaning", Files: []model.SkillFile{{Path: "SKILL.md", Content: "hello, world"}}}
 	if e := ValidateSkill(valid); e != nil {
 		t.Fatal(e)
 	}

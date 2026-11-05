@@ -1,56 +1,56 @@
-# 实际验收记录
+# Verification Record
 
-本记录覆盖 2026-10-31 至 2026-11-01 在这台 macOS 机器上的运行结果。使用当前目录提供的真实 DeepSeek / E2B 凭据；凭据未写入代码或测试输出。
+This record covers runs performed on this macOS machine from 2026-10-31 through 2026-11-01. The tests used the real DeepSeek and E2B credentials available in the current environment; credentials were not written to code or test output.
 
-| 项目 | 实际结果 |
+| Area | Results |
 | --- | --- |
-| 独立 runtime 包 | `make pack-runtime` 生成 0.3.0 tarball；核对产物使用协议 v3，包含生成后的 SDK/schema，没有 E2B npm 依赖或残留 e2b.js / terminal.js；本地服务与真实常驻进程、图片端到端验证通过 |
-| 按需生成 | 删除两端生成目录与 TS 编译产物后直接 `make` 成功；`make test` 自动生成并运行 19 项 JS/TS 测试和 Go race / PostgreSQL 集成测试；Git 未跟踪生成代码、dist 或 tarball |
-| 编译与静态检查 | 前端 TypeScript / Vite 构建、Go 构建、`go test ./...`、`go vet ./...` 通过 |
-| Wasm 隔离 | 9 项自动检查通过：TypeScript 与 SDK、无限循环中断、禁止 Node import、异步错误、悬空 Promise 截止时间、256 MiB 内存上限、ToolCallError 类型，以及等待评审不占执行时间、等待期间 CPU 限制与取消仍有效 |
-| 前端类型边界 | HTTP / SSE / WebSocket 使用明确的事件、帧、设置、MCP 模型；工具参数与结果在入口归一化，组件不使用 `any` 或二次 JSON 解析；自动测试覆盖原生 PTC 关联、失败结果和异常字段 |
-| 类型与 DAO 边界 | GORM / SQL 只在 DAO；独立持久化 / 业务模型。隔离 schema 测试覆盖 typed JSONB、false 更新、错误类型在 DAO 拒绝、事务回滚、preset 约束，以及原生事件 / OAuth 扩展字段无损保存；架构测试防止业务层重新引入 DB 访问和晚期解码 |
-| 常驻 Node / RPC | 真实多轮保持相同 PID；MCP、图片复用 Node；E2B 和 PTY 已迁入 Go；工作线程复用、两端 SDK 的 Content-Length 协议、schema 校验、请求取消、崩溃替换、大体积结果与嵌套回调自动测试通过 |
-| Node 故障恢复 | 对真实输出中的 Node 子进程 SIGKILL，Go 自动拉起新 PID；流式输出逐项保持，活动轮次与待评审中断，新 turn 恢复；空闲 Node 被杀也主动重启。测试只创建并删除自己的会话 |
-| 并发与停止 | 一个 PTC 会话停在 Plan 评审时，另一会话完成对话并恢复历史；停止评审会话保持 Node PID，不影响其他请求。工作线程测试验证卡死线程单独回收 |
-| 普通对话 | 真实模型返回、增量持久化；没有创建沙箱 |
-| Go E2B 适配层 | 真实 E2B：创建时 timeout-to-pause、文件写读、中文命令输出、stdout/stderr、非零退出码、取消、PTY resize/input/output/close、暂停查询不唤醒、恢复后文件保留；测试不启动 Node |
-| 终端独立于 runtime | Chrome 与 WebSocket 保持连接期间，对空闲 Node 先 SIGSTOP 再 SIGKILL；期间仍可输入输出，自动重启后同一 shell 环境变量保留；中文、resize、Ctrl-C 均通过 |
-| E2B / 网页终端 | 真实模型写入 `/workspace/nimbus-proof.txt`；WebSocket PTY 读取到 `NIMBUS_E2B_OK` |
-| 暂停和恢复 | 暂停后历史可读且不唤醒；恢复后 E2B ID、文件内容保持不变 |
-| 无效模板 | E2B 明确返回失败，页面 API 显示异常；没有写入占位沙箱或伪造 E2B ID |
-| PTC | 原生 Harness PTC 展示模式调用 `run_code`，Wasm 内通过 SDK 读取真实 E2B 文件；检查了 `tool/ptc-dispatch`，不是只检查模型文字 |
-| 崩溃恢复 | 输出中途强制杀掉 Go 进程；重启后已持久化的部分输出不变、旧轮中断、会话空闲；“继续”建立新轮且带上已显示的内容 |
-| Outbox | 5 个并发请求使用同一 client_msg_id，只产生并返回同一条 outbox；排队两轮串行执行，事件序号连续 |
-| 数据库不可变历史 | 直接 UPDATE / DELETE 事件被数据库拒绝；删除所属会话可以正常级联清理 |
-| Skill | 页面保存；真实模型读取 PostgreSQL 中的验证字符串；停用后新会话无法读取；全程不需要沙箱 |
-| Skill 校验 | 非法路径、二进制、101 个文件、单个文件超过 5 MiB 均拒绝 |
-| 模型 / Plan / 思考 | 已切换为 deepseek-flash；真实 max + 原生 Plan + Wasm PTC 通过 E2B 写入 `/workspace/plan-proof.txt` |
-| Plan 评审全流程 | 真实 Flash + DSH：PTC 调用原生 `exit_plan_mode`，Chrome 刷新保留待评审卡片，点击批准后原生 `plan/mode` 关闭 Plan 并继续回复；提交修改意见后出现修订版计划，暂不决定结束本轮并保留 Plan；Stop 中断待评审，不会批准 |
-| Plan 等待与答案边界 | PTC 的 `timeoutMs=10000`，等待人工确认 12 秒仍可批准继续；数据库集成测试覆盖跨会话回答、无效选项、重复回答幂等、多标签页冲突、取消 / 重启后的失效评审、仅原生事件更新 Plan 默认值 |
-| 会话隔离 | 第二个会话获得不同 E2B ID，无法读到第一个沙箱内的验证文件 |
-| 停止 | 有增量输出时停止，保留部分文本、旧轮标记 interrupted、会话回到 idle |
-| 自动暂停 | 将专用测试会话的活动时间回拨 16 分钟，实际 reaper 调用 E2B 暂停成功；没有在这里额外等待完整 15 分钟 |
-| MCP / OAuth | 本地真实 HTTP 协议测试服务完成 discovery、动态注册、PKCE、回调、401 后 refresh；真实 DeepSeek 调用 echo 工具成功且没有启动沙箱 |
-| Notion MCP | 使用用户已有 OAuth 授权，完整发现 68 个工具；真实 Flash + Wasm PTC 调用 `notion-get-self` 成功，没有启动沙箱、没有读写 Notion 页面；测试会话验证后删除 |
-| 大体积 MCP 响应 | 常驻 JSON-RPC 保留了等待 stdout 写完的修复；本地真实 HTTP MCP 自动测试覆盖分页工具目录（约 300 KB）和约 1.6 MB 工具结果，字段逐字校验完整，无需真实凭据 |
-| 凭据 / 请求边界 | API 仅返回遮罩，不返回 OAuth token；跨 Origin 请求被拒绝；已移除 HTTP 内部工具入口，RPC 回调绑定所属请求 / 会话 |
-| 浏览器 | 本机 Chrome 桌面与 390px 手机视口检查；对话、设置、Skill 保存及响应式布局可用，无页面 JavaScript 异常 |
-| 工具展示与折叠 | 参考 DSH Web 的工具摘要和调用树，用 HeroUI 实现整轮 / 单工具折叠；Chrome 验证 PTC 子调用去重与嵌套、命令失败和退出码、文件内容复制、Enter / Space 操作、SSE 更新保留用户折叠选择、已中断调用及 390px 布局 |
-| Preset 生命周期 | PostgreSQL 隔离 schema 集成测试及 race 检查通过：空会话可选、首条消息锁定、并发异模式首次发送仅一个成功、PATCH / 部分消息参数 / SQL 均不能绕过、失败消息重试保留锁定、旧混合会话迁移保留原生历史 |
-| 模型验证 | 官方更新博客、模型文档及真实 `/models` 均确认 Flash 的 API 名称为 `deepseek-flash`；产品仅提供 Flash，后端拒绝旧模型名 |
-| PG 通知与 Go 迭代器 | Go 基线 1.25；DAO `iter.Seq2` 消费通知，业务 `iter.Seq` 消费合并后的唤醒。集成测试覆盖提交前不可见、回滚无通知、六类表与删除级联、schema 隔离、终止监听连接后的重连和补读 |
-| SSE 空闲查询 | 同时打开列表和会话流，并运行 outbox dispatcher；跨过一次 5 秒心跳，独立测试 schema 的所有数据连接 `pg_stat_activity.query_start` 保持不变，验证没有空闲轮询查询 |
-| SSE 重放与背压 | 单事务写入超过 1000 条事件和帧，仅靠合并通知完整读完全部页；验证 Last-Event-ID 重连、25 ms 通知合并、跨会话过滤、迭代器退出清理、内存 provisioning 推送、并发帧提交不跳游标 |
-| 会话列表推送 | 浏览器持续订阅 `/api/sessions/stream`，观察期间没有 GET `/api/sessions` 轮询；标题修改实时到达，重新连接收到最新列表快照 |
-| SSE 心跳 | LISTEN/NOTIFY 改造后，列表流与对话流实测相邻心跳分别为 4999 ms、5000 ms；数据推送不受 5 秒心跳间隔影响 |
-| 图片 | Chrome 文件选择、粘贴、缩略图、大图预览、移除通过；Flash 真实识别测试图文字 `NIMBUS 4729`，原生 user/message 包含 image 附件；刷新后图片可见，后续轮次恢复附件并回答正确，未创建 E2B 沙箱 |
-| 图片边界 | 数据库集成测试覆盖跨会话图片读取与引用、伪造格式、无效 / 重复图片 ID、数量上限、纯图片消息及删除会话级联清理图片 |
-| 图片重启恢复 | 第一轮仅让模型回复“收到”；停止后端并删除测试会话的本地轮次缓存，重新启动后仍可读取图片、preset 仍锁定，第二轮 Flash 正确读出此前未转写的 `ORBIT 5938`；证明图片从 PostgreSQL 恢复 |
+| Standalone runtime package | `make pack-runtime` produced the 0.3.0 tarball. The artifact uses protocol v3 and includes the generated SDK/schema, with no E2B npm dependency or leftover `e2b.js` / `terminal.js`. Local service checks, a real persistent process, and image end-to-end verification passed. |
+| On-demand generation | `make` succeeded after removing generated directories on both sides and TypeScript build artifacts. `make test` generated and ran 19 JS/TS tests plus Go race and PostgreSQL integration tests. Git did not track generated code, `dist`, or the tarball. |
+| Build and static checks | Frontend TypeScript/Vite build, Go build, `go test ./...`, and `go vet ./...` passed. |
+| Wasm isolation | Nine automated checks passed: TypeScript and SDK integration, infinite-loop interruption, blocked Node imports, async errors, dangling-Promise timeouts, a 256 MiB memory limit, the `ToolCallError` type, and confirmation that waiting for review does not consume execution time while CPU limits and cancellation remain effective. |
+| Frontend type boundaries | HTTP, SSE, and WebSocket use explicit event, frame, settings, and MCP models. Tool arguments and results are normalized at the boundary; components use neither `any` nor secondary JSON parsing. Automated tests cover native PTC correlation, failed results, and error fields. |
+| Types and DAO boundary | GORM/SQL are confined to the DAO, with separate persistence and business models. Isolated-schema tests cover typed JSONB, false-value updates, rejection of invalid types in the DAO, transaction rollback, preset constraints, and lossless persistence of native event/OAuth extension fields. Architecture tests prevent DB access and late decoding from returning to the business layer. |
+| Persistent Node / RPC | Real multi-turn sessions kept the same PID. MCP and images reused Node; E2B and PTY moved to Go. Automated tests passed for worker reuse, Content-Length handling in both SDKs, schema validation, request cancellation, crash replacement, large results, and nested callbacks. |
+| Node recovery | After sending SIGKILL to the Node child process during real output, Go started a new PID automatically. Streaming output was preserved item by item; the active turn and pending review were interrupted, and a new turn recovered. An idle Node process was also restarted after being killed. Tests created and deleted only their own sessions. |
+| Concurrency and stopping | While one PTC session waited for Plan review, another session completed a chat and recovered history. Stopping the review session kept its Node PID and did not affect other requests. Worker tests verified that a stuck worker is reclaimed independently. |
+| Ordinary chat | A real model response was returned and persisted incrementally; no sandbox was created. |
+| Go E2B adapter | Against real E2B: timeout-to-pause on creation, file writes and reads, Unicode command output, stdout/stderr, nonzero exit codes, cancellation, PTY resize/input/output/close, status checks that do not wake a paused sandbox, and file preservation after resume. Tests did not start Node. |
+| Terminal independent of runtime | While Chrome and the WebSocket stayed connected, an idle Node process was first SIGSTOP'ed and then SIGKILL'ed. Terminal input/output continued, and the restarted process retained the shell environment. Unicode text, resize, and Ctrl-C passed. |
+| E2B / web terminal | A real model wrote `/workspace/nimbus-proof.txt`; the WebSocket PTY read `NIMBUS_E2B_OK`. |
+| Pause and resume | History remained readable after pausing without waking the sandbox. After resume, the E2B ID and file contents were unchanged. |
+| Invalid template | E2B returned an explicit failure, and the page API showed an error. No placeholder sandbox or fake E2B ID was stored. |
+| PTC | Native Harness PTC display mode called `run_code`; the SDK read a real E2B file from Wasm. The check inspected `tool/ptc-dispatch`, not just model text. |
+| Crash recovery | The Go process was killed during output. After restart, persisted partial output remained unchanged, the old turn was interrupted, and the session was idle. “Continue” started a new turn with the output already shown. |
+| Outbox | Five concurrent requests using the same `client_msg_id` created and returned the same outbox row. Two queued turns ran serially, and event sequence numbers remained contiguous. |
+| Immutable database history | Direct UPDATE/DELETE operations on events were rejected by the database; deleting the owning session still cascaded normally. |
+| Skills | A skill was saved through the page. A real model read its verification string from PostgreSQL. A new session could not read it after the skill was disabled. No sandbox was needed. |
+| Skill validation | Invalid paths, binary files, 101 files, and individual files larger than 5 MiB were rejected. |
+| Model / Plan / reasoning | Switched to `deepseek-flash`; real max reasoning + native Plan + Wasm PTC wrote `/workspace/plan-proof.txt` through E2B. |
+| Full Plan review flow | Real Flash + DSH: PTC called native `exit_plan_mode`; Chrome refresh preserved the pending review card; approval closed Plan through native `plan/mode` and continued the response. Feedback produced a revised plan. Choosing “Decide later” ended the turn while keeping Plan active. Stop interrupted a pending review without approving it. |
+| Plan waits and answer boundaries | With PTC `timeoutMs=10000`, a human could approve after a 12-second wait. Database integration tests cover cross-session answers, invalid options, idempotent duplicate answers, multi-tab conflicts, stale reviews after cancellation/restart, and Plan defaults updated only by native events. |
+| Session isolation | A second session received a different E2B ID and could not read the verification file in the first sandbox. |
+| Stop | Stopping during incremental output preserved partial text, marked the old turn `interrupted`, and returned the session to `idle`. |
+| Automatic pause | The activity time of a dedicated test session was moved back 16 minutes, and the reaper successfully paused it through E2B. The test did not wait an additional full 15 minutes. |
+| MCP / OAuth | A local real-HTTP protocol test server completed discovery, dynamic registration, PKCE, callback, and refresh after a 401. A real DeepSeek call successfully invoked the echo tool without starting a sandbox. |
+| Notion MCP | Using the user's existing OAuth grant, the app discovered all 68 tools. Real Flash + Wasm PTC successfully called `notion-get-self` without starting a sandbox or reading/writing Notion pages. The test session was deleted after verification. |
+| Large MCP responses | Persistent JSON-RPC retained the fix that waits for stdout writes to complete. Local real-HTTP MCP automated tests covered a paginated tool catalog (~300 KB) and a ~1.6 MB tool result, with every field verified and no real credentials required. |
+| Credential / request boundaries | The API returns masked values, not OAuth tokens. Cross-Origin requests were rejected. The internal HTTP tool endpoint was removed, and RPC callbacks are bound to their request/session. |
+| Browser | Checked Chrome desktop and a 390 px mobile viewport. Chat, settings, skill saving, and responsive layout worked with no page JavaScript errors. |
+| Tool display and folding | Based on DSH Web tool summaries and call trees, HeroUI supports folding all tools in a turn or an individual tool. Chrome verified PTC child-call deduplication/nesting, command failures and exit codes, file-content copying, Enter/Space operation, preservation of the user's fold choices through SSE updates, interrupted calls, and the 390 px layout. |
+| Preset lifecycle | PostgreSQL isolated-schema integration and race checks passed: selection in an empty session, locking on the first message, only one success for concurrent first sends with different presets, no bypass through PATCH/partial-message parameters/SQL, retry preserving the locked preset, and migration of old mixed sessions while retaining native history. |
+| Model validation | The official update blog, model documentation, and real `/models` endpoint confirmed `deepseek-flash` as the API name for Flash. The product offers Flash only, and the backend rejects old model names. |
+| PG notifications and Go iterators | Go baseline 1.25. DAO `iter.Seq2` consumes notifications, and business `iter.Seq` consumes merged wakeups. Integration tests cover visibility only after commit, no notification after rollback, six table types and delete cascades, schema isolation, reconnect after terminating a listener connection, and catch-up reads. |
+| SSE idle queries | The session list and session stream were open while the outbox dispatcher ran. Across a 5-second heartbeat, `pg_stat_activity.query_start` stayed unchanged for all data connections in an isolated test schema, confirming there were no idle polling queries. |
+| SSE replay and backpressure | A single transaction wrote more than 1,000 events and frames; merged notifications alone were enough to read every page. Tests cover Last-Event-ID reconnect, 25 ms notification merging, cross-session filtering, iterator cleanup, in-memory provisioning updates, and concurrent frame commits without cursor skips. |
+| Session list updates | The browser continuously subscribed to `/api/sessions/stream` without polling `GET /api/sessions`. Title changes arrived live, and reconnecting returned the latest list snapshot. |
+| SSE heartbeats | After the LISTEN/NOTIFY change, measured adjacent heartbeats were 4,999 ms and 5,000 ms for the list and chat streams. Data delivery was not delayed by the 5-second heartbeat interval. |
+| Images | Chrome file selection, paste, thumbnails, full-size preview, and removal passed. Real Flash recognized `NIMBUS 4729` in the test image. The native `user/message` included the image attachment; it remained visible after refresh, was restored on the next turn, and was answered correctly without creating an E2B sandbox. |
+| Image boundaries | Database integration tests cover cross-session image reads and references, spoofed formats, invalid/duplicate image IDs, count limits, image-only messages, and image cleanup when deleting a session. |
+| Image recovery after restart | The first turn asked the model to reply only “Received.” After stopping the backend and deleting the test session's local turn cache, the restarted service could still read the image and retained the locked preset. In the second turn, Flash correctly read the previously untranscribed `ORBIT 5938`, confirming that the image was restored from PostgreSQL. |
 
-## 重跑
+## Rerun Checks
 
-服务启动后，顺序执行，避免崩溃恢复测试影响其他测试：
+After starting the service, run these in order so crash-recovery tests do not affect other checks:
 
 ```sh
 node scripts/e2e.mjs
@@ -65,30 +65,30 @@ node scripts/plan-e2e.mjs
 node scripts/tool-ui-check.mjs
 ```
 
-Preset、模型迁移、图片归属、计划评审，以及 PG 通知 / SSE 空闲查询与重连的数据库集成测试使用独立临时 schema，不调用模型、不改动现有会话：
+Preset, model migration, image ownership, Plan review, and PG notification/SSE idle-query and reconnect database integration tests use an isolated temporary schema. They do not call a model or modify existing sessions:
 
 ```sh
 NIMBUS_TEST_DATABASE_URL='postgres://nimbus@127.0.0.1:55432/nimbus?sslmode=disable' make test
 go vet ./...
 ```
 
-`npm test` 共 19 项，还验证运行时在加载 Harness 前拒绝不一致的会话 preset 与旧模型名、超过管道缓冲区的大体积 MCP 工具目录和结果传输，以及工具调用树关联、重放、退出码与待完成状态。`scripts/plan-e2e.mjs` 使用本机 Chrome，只回答其自身创建的测试会话，并在退出时删除这些会话。`scripts/tool-ui-check.mjs` 使用浏览器内模拟事件，不调用真实模型，也不修改现有会话。
+`npm test` runs 19 tests. It also verifies that the runtime rejects inconsistent session presets and old model names before loading the Harness, supports large MCP tool catalogs/results beyond the pipe buffer, and preserves tool-tree correlation, replay, exit codes, and pending state. `scripts/plan-e2e.mjs` uses local Chrome, responds only to test sessions it created, and deletes those sessions on exit. `scripts/tool-ui-check.mjs` uses simulated browser events; it does not call a real model or modify existing sessions.
 
-`internal/sandbox` 的 Go 集成测试通过 `NIMBUS_TEST_E2B_KEY` 选择性启用真实 E2B，创建并删除自己的沙箱。`scripts/terminal-e2e.ts` 在现有用户会话都空闲时才中断 Node，使用本机 Chrome，并清理自己的会话和沙箱。
+The Go integration tests in `internal/sandbox` selectively enable real E2B with `NIMBUS_TEST_E2B_KEY` and create/delete their own sandboxes. `scripts/terminal-e2e.ts` interrupts Node only when all existing user sessions are idle; it uses local Chrome and cleans up its own session and sandbox.
 
-`internal/runtimeprotocol` 通过真实 SDK 测试请求 / 返回 schema、缺失字段和断连回调清理；`internal/executor` 的 Go race 测试覆盖 12 个并发大消息、反向回调内再次请求 Node、输出确认顺序、单请求与单工具取消、活动 / 空闲崩溃后的主动重启，以及关闭后不重启。`scripts/runtime-e2e.ts` 使用真实 Flash / DSH / E2B 检查常驻 PID、多会话 Plan 等待、Stop、Node SIGKILL 恢复、持久化输出、Wasm 工具调用和 PTY。
+`internal/runtimeprotocol` uses the real SDK to test request/response schemas, missing fields, and cleanup of disconnected callbacks. Go race tests in `internal/executor` cover 12 concurrent large messages, a reverse callback that requests Node again, output acknowledgment order, per-request and per-tool cancellation, active/idle crash recovery, and no restart after shutdown. `scripts/runtime-e2e.ts` uses real Flash/DSH/E2B to check persistent PIDs, Plan waits across multiple sessions, Stop, Node SIGKILL recovery, persisted output, Wasm tool calls, and PTY.
 
-MCP 需要另一个终端先运行 `node scripts/mcp-fixture.mjs`，再执行 `node scripts/mcp-e2e.mjs`。这些检查会调用真实模型 / 沙箱，产生相应使用量。恢复测试会主动结束并重新启动本地服务。测试脚本应在专用开发实例运行。
+For MCP checks, start `node scripts/mcp-fixture.mjs` in another terminal before running `node scripts/mcp-e2e.mjs`. These checks call real models/sandboxes and incur usage. Recovery tests actively stop and restart the local service. Run the test scripts on a dedicated development instance.
 
-## 明确的边界
+## Explicit Limits
 
-- 这是单用户、仅绑定本机回环地址的应用；不包含公网部署、登录、多租户或多实例调度。
-- 常驻服务复用 Node 进程和工作线程；每轮仍新建 DSH 上下文和从数据库恢复工作目录。崩溃后不自动重放已接收的工具调用，外部服务已开始的副作用无法回滚。
-- Go 二进制仅内嵌前端；`nimbus-agent-runtime` 单独作为 npm 包安装，明确依赖 Harness，运行时代码为 TypeScript。Go 只检查 Nimbus 协议并调用 runtime，不再接收 Harness 路径。需要 Node.js 24.11+；npm 包尚未发布到公共 registry，可安装构建出的 tarball。
-- DSH RC.5 的公共持久化事件不包含每个 token。增量帧单独存入 PostgreSQL，恢复时提供明确标识的中断上下文。服务端 SSE 由 PostgreSQL LISTEN/NOTIFY 驱动，空闲和心跳不查库；监听重连后按游标补读。客户端不轮询，心跳独立为 5 秒。E2B reaper 仍每 30 秒检查云端生命周期。详见 ARCHITECTURE.md。
-- E2B 单次同步命令当前最多执行 55 秒、输出上限 1 MiB；长任务可以在沙箱内启动后台进程，再轮询日志。沙箱内容不备份到 Mac，销毁后不能恢复。
-- OAuth 已通过协议测试，也使用用户已有 Notion 授权完成了真实只读调用；没有自动执行第三方登录。第三方服务是否要求预注册 OAuth 客户端、是否接受本机 HTTP 回调，取决于该服务策略。
-- 没有压测 20 个真实并发沙箱或等待完整一小时来测试云端暂停。容量锁、等待、近到期暂停与 E2B onTimeout=pause 已实现。
-- E2B 使用固定版本的社区 Go SDK，隔离在 `internal/sandbox`；没有官方 Go SDK 的假设。SDK 不提供按 ID 的无唤醒生命周期接口，因此在同一适配层补充有类型的 info/pause/delete HTTP 调用。Node 已移除 E2B npm 依赖及其相关依赖链；当前 `npm audit --omit=dev` 为 0 项，前端安装审计也为 0 项。
+- This is a single-user application bound to the local loopback address. It does not include public deployment, login, multi-tenancy, or multi-instance scheduling.
+- The persistent service reuses Node processes and workers, but creates a new DSH context each turn and restores the working directory from the database. After a crash, accepted tool calls are not replayed automatically, and side effects already started by external services cannot be rolled back.
+- The Go binary embeds only the frontend. `nimbus-agent-runtime` is installed separately as an npm package, depends explicitly on the Harness, and is written in TypeScript. Go validates the Nimbus protocol and calls the runtime; it no longer accepts a Harness path. Node.js 24.11+ is required. The npm package is not yet published to a public registry; install the built tarball instead.
+- Public DSH RC.5 persistent events do not include every token. Incremental frames are stored separately in PostgreSQL, and recovery includes an explicitly identified interrupted context. Server-side SSE is driven by PostgreSQL LISTEN/NOTIFY; idle periods and heartbeats do not query the database. Listener reconnects catch up by cursor. The client does not poll; heartbeats are sent every 5 seconds. The E2B reaper still checks cloud lifecycle every 30 seconds. See `ARCHITECTURE.md`.
+- A single synchronous E2B command currently runs for at most 55 seconds and returns at most 1 MiB of output. Longer tasks can start background processes in the sandbox and poll their logs. Sandbox contents are not backed up to the Mac and cannot be recovered after deletion.
+- OAuth passed protocol tests and a real read-only call using the user's existing Notion grant. No third-party login was automated. Whether a third-party service requires pre-registering an OAuth client or accepts a local HTTP callback depends on its policy.
+- We did not load-test 20 real concurrent sandboxes or wait a full hour to test cloud pause. Capacity locking, waiting, near-expiry pause, and E2B `onTimeout=pause` are implemented.
+- E2B uses a fixed version of a community Go SDK isolated under `internal/sandbox`; no official Go SDK is assumed. The SDK does not provide lifecycle operations by ID without waking the sandbox, so typed info/pause/delete HTTP calls are added in the same adapter. Node no longer depends on the E2B npm package or its dependency chain. Current `npm audit --omit=dev` reports zero issues; the frontend install audit also reports zero issues.
 
-测试截图和运行日志保存在被 Git 忽略的 `.local/` 目录。正常交付时测试用 MCP 配置和临时 Skill 会删除，保留一段可查看的 E2B 验证对话及其已暂停沙箱。
+Screenshots and runtime logs are stored under the Git-ignored `.local/` directory. For normal delivery, remove the test MCP configuration and temporary skills, while retaining one inspectable E2B verification chat and its paused sandbox.

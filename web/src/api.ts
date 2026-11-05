@@ -10,7 +10,7 @@ export async function api<T = unknown>(
     body: body ? JSON.stringify(body) : undefined,
   });
   if (!r.ok) {
-    let error = "请求失败";
+    let error = "Request failed";
     try {
       error = (await r.json()).error;
     } catch {
@@ -196,10 +196,10 @@ export type UserQuestion = {
   answer?: { answers?: { id: string; selected: string[]; custom?: string }[] };
 };
 export const sandboxLabels: Record<string, string> = {
-  not_started: "未启动",
-  provisioning: "创建 / 唤醒中",
-  running: "运行中",
-  paused: "已暂停",
-  killed: "已销毁",
-  error: "异常",
+  not_started: "Not started",
+  provisioning: "Starting / resuming",
+  running: "Running",
+  paused: "Paused",
+  killed: "Deleted",
+  error: "Error",
 };

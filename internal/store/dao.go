@@ -377,7 +377,7 @@ func (s *Store) RecoverInterrupted(ctx context.Context) error {
 		if err := tx.InterruptQuestions(ctx, ""); err != nil {
 			return err
 		}
-		if err := tx.db.Model(&Outbox{}).Where("status='starting'").Select("status", "error", "outcome").Updates(&Outbox{Status: "failed", Error: "后端重启，本轮尚未送达，请重发", Outcome: "interrupted"}).Error; err != nil {
+		if err := tx.db.Model(&Outbox{}).Where("status='starting'").Select("status", "error", "outcome").Updates(&Outbox{Status: "failed", Error: "The server restarted before this turn was delivered. Please retry.", Outcome: "interrupted"}).Error; err != nil {
 			return err
 		}
 		if err := tx.db.Model(&Outbox{}).Where("status='delivered' AND outcome=''").Update("outcome", "interrupted").Error; err != nil {

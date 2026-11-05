@@ -19,31 +19,31 @@ import (
 
 func ValidateSkill(x model.Skill) error {
 	if strings.TrimSpace(x.Name) == "" {
-		return fmt.Errorf("Skill 名称不能为空")
+		return fmt.Errorf("Skill name cannot be empty.")
 	}
 	if len(x.Files) == 0 || len(x.Files) > 100 {
-		return fmt.Errorf("每个 Skill 必须包含 1–100 个文本文件")
+		return fmt.Errorf("Each skill must contain 1–100 text files.")
 	}
 	seen := map[string]bool{}
 	for _, f := range x.Files {
 		if f.Path == "" || path.IsAbs(f.Path) || path.Clean(f.Path) != f.Path || strings.Contains(f.Path, "\\") || f.Path == ".." || strings.HasPrefix(f.Path, "../") || seen[f.Path] {
-			return fmt.Errorf("文件路径不合法或重复：%s", f.Path)
+			return fmt.Errorf("File path is invalid or duplicated: %s", f.Path)
 		}
 		seen[f.Path] = true
 		if len(f.Content) > 5*1024*1024 {
-			return fmt.Errorf("单个文件不得超过 5 MB：%s", f.Path)
+			return fmt.Errorf("File cannot exceed 5 MB: %s", f.Path)
 		}
 		if !utf8.ValidString(f.Content) || strings.ContainsRune(f.Content, 0) {
-			return fmt.Errorf("仅支持 UTF-8 文本文件：%s", f.Path)
+			return fmt.Errorf("Only UTF-8 text files are supported: %s", f.Path)
 		}
 		for _, r := range f.Content {
 			if r < 32 && r != '\n' && r != '\r' && r != '\t' {
-				return fmt.Errorf("拒绝二进制文件：%s", f.Path)
+				return fmt.Errorf("Binary files are not allowed: %s", f.Path)
 			}
 		}
 		switch strings.ToLower(path.Ext(f.Path)) {
 		case ".png", ".jpg", ".jpeg", ".gif", ".pdf", ".zip", ".exe", ".wasm", ".mp3", ".mp4", ".woff", ".ttf":
-			return fmt.Errorf("仅支持文本文件：%s", f.Path)
+			return fmt.Errorf("Only text files are supported: %s", f.Path)
 		}
 	}
 	return nil
@@ -74,7 +74,7 @@ func (s *Server) settingsRoutes(r *gin.Engine) {
 			if field.value != nil && *field.value != "••••••••" {
 				v := *field.value
 				if strings.TrimSpace(v) == "" {
-					s.fail(c, 400, fmt.Errorf("设置值不能为空"))
+					s.fail(c, 400, fmt.Errorf("Setting value cannot be empty."))
 					return
 				}
 				if field.key == "deepseek_api_key" {
@@ -167,7 +167,7 @@ func (s *Server) settingsRoutes(r *gin.Engine) {
 		}
 		u, e := url.Parse(x.URL)
 		if e != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") || u.User != nil || x.Name == "" {
-			s.fail(c, 400, fmt.Errorf("仅支持 streamable-http 的 HTTP(S) URL，不支持 STDIO 命令"))
+			s.fail(c, 400, fmt.Errorf("Only Streamable HTTP URLs are supported. STDIO commands are not supported."))
 			return
 		}
 		if c.Param("id") == "" {
@@ -250,7 +250,7 @@ func (s *Server) settingsRoutes(r *gin.Engine) {
 		}
 		x := model.MCPServer(row)
 		if x.OAuthData.State != state || x.OAuthData.ExpiresAt < time.Now().Unix() || c.Query("code") == "" {
-			c.String(400, "OAuth 授权过期或被拒绝，请返回设置重新授权。")
+			c.String(400, "OAuth authorization expired or was denied. Return to Settings and authorize again.")
 			return
 		}
 		if _, e := s.mcp(c.Request.Context(), x, "callback", model.MCPArguments{Code: c.Query("code")}); e != nil {
@@ -302,7 +302,7 @@ func (s *Server) callMCP(ctx context.Context, name string, args model.DynamicJSO
 	}
 	row, err := s.S.MCPServer(ctx, id.String())
 	if err != nil || !row.Enabled {
-		return model.MCPCallResult{}, fmt.Errorf("MCP 服务未启用")
+		return model.MCPCallResult{}, fmt.Errorf("MCP server is disabled.")
 	}
 	result, err := s.mcp(ctx, model.MCPServer(row), "call", model.MCPArguments{Name: parts[2], Arguments: args})
 	if err != nil {

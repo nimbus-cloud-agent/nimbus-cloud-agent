@@ -8,8 +8,8 @@ test(
   { timeout: 20000 },
   async () => {
     // Larger than the macOS pipe buffer; do not depend on a live OAuth account.
-    const description = "Large MCP schema 描述 ".repeat(6000);
-    const content = "Large tool response 正文 ".repeat(60000);
+    const description = "Large MCP schema description ".repeat(6000);
+    const content = "Large tool response body ".repeat(60000);
     const cursors: string[] = [];
     const server = http.createServer(async (req, res) => {
       if (req.method !== "POST") {

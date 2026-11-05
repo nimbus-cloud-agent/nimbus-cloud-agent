@@ -61,13 +61,13 @@ export default function PanelDivider() {
       ref={ref}
       className="panel-divider"
       role="separator"
-      aria-label="终端宽度"
+      aria-label="Terminal width"
       aria-orientation="vertical"
       aria-valuemin={320}
       aria-valuemax={maximum}
       aria-valuenow={width}
       tabIndex={0}
-      title="拖动调整终端宽度，双击恢复默认"
+      title="Drag to resize the terminal. Double-click to restore the default width."
       onDoubleClick={() => update(null)}
       onKeyDown={(e) => {
         if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return;

@@ -71,7 +71,7 @@ async function create(plan = false) {
   await api(
     `/sessions/${s.id}`,
     {
-      title: "常驻运行时验证",
+      title: "Persistent runtime verification",
       options: { ...s.options, plan },
     },
     "PATCH",
@@ -166,7 +166,7 @@ async function terminal(s: Session) {
   });
 }
 const plan =
-  "这是运行时集成测试。不要用沙箱、文件或 MCP。立即通过 run_code 调用 tools.exit_plan_mode 提交计划，内容是等待批准后回复 PLAN_OK；必须使用工具提交。run_code 的 timeoutMs 设为 10000。";
+  "This is a runtime integration test. Do not use the sandbox, files, or MCP. Submit a plan now by calling tools.exit_plan_mode through run_code. The plan should say to reply PLAN_OK after approval. You must submit it with the tool. Set run_code timeoutMs to 10000.";
 try {
   const first = await health();
   assert.ok(first.pid);
@@ -176,14 +176,14 @@ try {
     a,
     await send(
       a,
-      "请记住标记 NIMBUS_RPC_MEMORY，只回复 MEMORY_SAVED，不使用工具。",
+      "Remember the marker NIMBUS_RPC_MEMORY. Reply only with MEMORY_SAVED. Do not use tools.",
     ),
   );
   const reviewTurn = await send(b, plan);
   await pending(b, reviewTurn);
   const second = await settled(
     a,
-    await send(a, "上轮让你记住的标记是什么？只回复标记，不使用工具。"),
+    await send(a, "What marker did I ask you to remember last turn? Reply with only the marker. Do not use tools."),
   );
   assert.ok(
     second.events.some(
@@ -211,7 +211,7 @@ try {
   const question = await pending(b, crashReview);
   const generating = await send(
     a,
-    "不要用工具，请逐行写出从 1 到 2000 的所有数字，持续输出，不要省略或概括。",
+    "Do not use tools. Write every number from 1 to 2000, one per line. Keep going without skipping or summarizing.",
   );
   const before = await until(async () => {
     const d = await events(a);
@@ -239,7 +239,7 @@ try {
     a,
     await send(
       a,
-      "取消计数任务。这是恢复检查，只回复 RECOVERY_OK，不要使用工具。",
+      "Cancel the counting task. This is a recovery check. Reply only with RECOVERY_OK. Do not use tools.",
     ),
   );
   assert.equal((await health()).pid, restarted.pid);
@@ -247,7 +247,7 @@ try {
     "PASS active Node SIGKILL: automatic restart, interrupted turns/review, durable partial output, new turn recovery",
   );
   const idle = await killRuntime();
-  await settled(a, await send(a, "只回复 IDLE_RESTART_OK，不使用工具。"));
+  await settled(a, await send(a, "Reply only with IDLE_RESTART_OK. Do not use tools."));
   assert.equal((await health()).pid, idle.pid);
   console.log("PASS idle Node SIGKILL restarts without a new request");
   await api(
@@ -259,7 +259,7 @@ try {
     b,
     await send(
       b,
-      "之前的计划测试已取消。请通过 run_code 调用 tools.sandbox_exec，在 /workspace/rpc-proof.txt 写入 RPC_E2B_OK，再 cat 此文件，报告真实输出。",
+      "The previous plan test was canceled. Use run_code to call tools.sandbox_exec, write RPC_E2B_OK to /workspace/rpc-proof.txt, then cat the file and report the actual output.",
     ),
   );
   assert.ok(

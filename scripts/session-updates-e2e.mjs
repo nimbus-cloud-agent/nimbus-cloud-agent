@@ -130,16 +130,16 @@ try {
   const png = await fixture.screenshot();
   await fixture.close();
   await page
-    .getByLabel("选择图片")
+    .getByLabel("Choose images")
     .setInputFiles({ name: "fixture.png", mimeType: "image/png", buffer: png });
   await page.locator(".image-drafts img").waitFor();
-  await page.getByRole("button", { name: "预览图片：fixture.png" }).click();
+  await page.getByRole("button", { name: "Preview image: fixture.png" }).click();
   await page.locator(".image-preview").waitFor();
   await page.keyboard.press("Escape");
-  await page.getByRole("button", { name: "移除图片：fixture.png" }).click();
+  await page.getByRole("button", { name: "Remove image: fixture.png" }).click();
   assert.equal(await page.locator(".image-drafts img").count(), 0);
   // Exercise real browser clipboard-file handling, not a direct API substitute.
-  await page.getByRole("textbox", { name: "发送消息" }).evaluate((el, b64) => {
+  await page.getByRole("textbox", { name: "Send a message" }).evaluate((el, b64) => {
     const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
     const transfer = new DataTransfer();
     transfer.items.add(new File([bytes], "pasted.png", { type: "image/png" }));
@@ -167,26 +167,26 @@ try {
     0,
   );
   console.log("PASS no browser session-list polling");
-  await api(path, { title: "SSE 即时更新验证" }, "PATCH");
-  await page.getByRole("heading", { name: "SSE 即时更新验证" }).waitFor();
+  await api(path, { title: "SSE live update verification" }, "PATCH");
+  await page.getByRole("heading", { name: "SSE live update verification" }).waitFor();
   await until(() =>
     list.frames.some((f) =>
-      f.data?.some((x) => x.title === "SSE 即时更新验证"),
+      f.data?.some((x) => x.title === "SSE live update verification"),
     ),
   );
   const reconnect = await stream("/sessions/stream");
   streams.push(reconnect);
   await until(() =>
     reconnect.frames.some((f) =>
-      f.data?.some((x) => x.id === s.id && x.title === "SSE 即时更新验证"),
+      f.data?.some((x) => x.id === s.id && x.title === "SSE live update verification"),
     ),
   );
   console.log("PASS list pushes changes and reconnect sends current snapshot");
 
   await page
-    .getByRole("textbox", { name: "发送消息" })
-    .fill("读取图片里的字母和数字，只回答该字符串，不使用工具。");
-  await page.getByRole("button", { name: "发送", exact: true }).click();
+    .getByRole("textbox", { name: "Send a message" })
+    .fill("Read the letters and numbers in the image. Reply only with that string. Do not use tools.");
+  await page.getByRole("button", { name: "Send", exact: true }).click();
   let d = await completed(s.id, 1);
   assert.match(
     JSON.stringify(d.events.filter((e) => e.type === "assistant/message")),
@@ -208,9 +208,9 @@ try {
   await page.reload();
   await page.locator(".user-message img").waitFor();
   await page
-    .getByRole("textbox", { name: "发送消息" })
-    .fill("刚才图片里的文字是什么？只回答该字符串。");
-  await page.getByRole("button", { name: "发送", exact: true }).click();
+    .getByRole("textbox", { name: "Send a message" })
+    .fill("What text was in the image? Reply only with that string.");
+  await page.getByRole("button", { name: "Send", exact: true }).click();
   d = await completed(s.id, 2);
   assert.match(
     JSON.stringify(
@@ -241,7 +241,7 @@ try {
   await api(`/sessions/${ptc.id}/messages`, {
     client_msg_id: crypto.randomUUID(),
     message:
-      "当前为 Plan 模式。请使用 run_code 调用 tools.sandbox_write_file，在 /workspace/plan-proof.txt 写入 FLASH_PTC_PLAN_OK；仅保存这个计划文档，不要执行其他任务。",
+      "Plan mode is active. Use run_code to call tools.sandbox_write_file and write FLASH_PTC_PLAN_OK to /workspace/plan-proof.txt. Only save this plan document; do not perform any other task.",
     thinking: "max",
     plan: true,
   });

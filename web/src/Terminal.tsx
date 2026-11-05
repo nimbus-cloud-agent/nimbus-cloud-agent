@@ -121,7 +121,7 @@ export default function TerminalPanel({
     ws.onclose = () => {
       setConnection("disconnected");
       if (!pauseRequested.current)
-        term.writeln("\r\n\x1b[90m连接已断开，可点击重新连接。\x1b[0m");
+        term.writeln("\r\n\x1b[90mConnection closed. Select reconnect to try again.\x1b[0m");
     };
     const input = term.onData((data) => {
       if (ws.readyState === 1) {
@@ -168,11 +168,11 @@ export default function TerminalPanel({
     }
   }
   return (
-    <aside className="terminal-panel" aria-label="云端终端">
+    <aside className="terminal-panel" aria-label="Cloud terminal">
       <div className="panel-heading">
         <span>
           <TerminalSquare size={19} />
-          云端终端
+          Cloud terminal
         </span>
         <span className={"sandbox-badge state-" + state}>
           <span
@@ -189,7 +189,7 @@ export default function TerminalPanel({
         </span>
       </div>
       <div className="terminal-meta">
-        <span>专属 Linux 环境</span>
+        <span>Dedicated Linux environment</span>
         <span>
           <MapPin size={13} />
           {session?.sandbox.info?.region ??
@@ -206,7 +206,7 @@ export default function TerminalPanel({
                 isIconOnly
                 size="sm"
                 variant="ghost"
-                aria-label="缩小终端字体"
+                aria-label="Decrease terminal font size"
                 isDisabled={fontSize <= 12}
                 onPress={() => setFontSize((s) => Math.max(12, s - 1))}
               >
@@ -219,7 +219,7 @@ export default function TerminalPanel({
                 isIconOnly
                 size="sm"
                 variant="ghost"
-                aria-label="放大终端字体"
+                aria-label="Increase terminal font size"
                 isDisabled={fontSize >= 20}
                 onPress={() => setFontSize((s) => Math.min(20, s + 1))}
               >
@@ -229,7 +229,7 @@ export default function TerminalPanel({
                 isIconOnly
                 size="sm"
                 variant="ghost"
-                aria-label="重新连接终端"
+                aria-label="Reconnect terminal"
                 onPress={() => setGeneration((x) => x + 1)}
               >
                 <RotateCw size={15} />
@@ -241,11 +241,11 @@ export default function TerminalPanel({
             <span className={connected ? "dot online" : "dot"} />
             {!connected
               ? connection === "connecting"
-                ? "正在连接云端终端…"
-                : "连接已断开，点击右上角重新连接。"
+                ? "Connecting to the cloud terminal…"
+                : "Connection closed. Select the reconnect button above."
               : session?.agent_state !== "idle"
-                ? "Agent 正在使用同一台沙箱。"
-                : "你的命令直接在沙箱中执行。"}
+                ? "The agent is using this sandbox too."
+                : "Your commands run directly in the sandbox."}
           </div>
         </div>
       ) : (
@@ -255,21 +255,21 @@ export default function TerminalPanel({
           </div>
           <h3>
             {state === "error"
-              ? "沙箱暂时不可用"
+              ? "Sandbox temporarily unavailable"
               : state === "killed"
-                ? "沙箱已销毁"
+                ? "Sandbox deleted"
                 : state === "paused"
-                  ? "现场已保留，随时继续"
-                  : "你的云端工作环境"}
+                  ? "Your workspace is saved and ready to resume"
+                  : "Your cloud workspace"}
           </h3>
           <p>
             {state === "error"
               ? session?.sandbox.error
               : state === "killed"
-                ? "对话历史仍然保留。原沙箱文件已不可恢复，启动将创建新的执行环境。"
+                ? "Your chat history is still available. Files in the deleted sandbox cannot be recovered; starting again creates a new environment."
                 : state === "paused"
-                  ? "文件与内存保留在云端。唤醒后，可以从上次的现场继续。"
-                  : "Agent 执行任务时会自动启动。也可以现在打开终端，直接运行命令。"}
+                  ? "Your files and memory are preserved in the cloud. Resume the sandbox to continue where you left off."
+                  : "The agent starts the sandbox when a task needs it. You can also start it now and run commands in the terminal."}
           </p>
           <Button
             variant="secondary"
@@ -278,15 +278,15 @@ export default function TerminalPanel({
             onPress={() => action("start")}
           >
             <Play size={16} />
-            {state === "paused" ? "唤醒沙箱" : "启动沙箱"}
+            {state === "paused" ? "Resume sandbox" : "Start sandbox"}
           </Button>
-          <small>仅浏览对话不会启动沙箱</small>
+          <small>Browsing your chats does not start the sandbox.</small>
         </div>
       )}
       <div className="terminal-bottom">
         {session?.sandbox.e2b_sandbox_id && (
           <div className="sandbox-id">
-            <span>沙箱 ID</span>
+            <span>Sandbox ID</span>
             <code title={session.sandbox.e2b_sandbox_id}>
               {session.sandbox.e2b_sandbox_id}
             </code>
@@ -295,7 +295,7 @@ export default function TerminalPanel({
         <div className="row">
           <span className="idle-hint">
             <Clock3 size={14} />
-            闲置 15 分钟后暂停
+            Pauses after 15 minutes of inactivity
           </span>
           {state === "running" && (
             <Button
@@ -306,7 +306,7 @@ export default function TerminalPanel({
               onPress={() => action("pause")}
             >
               <Pause size={15} />
-              暂停
+              Pause
             </Button>
           )}
         </div>

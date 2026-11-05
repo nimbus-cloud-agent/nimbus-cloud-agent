@@ -21,7 +21,7 @@ export default function ImageGallery({
               type="button"
               className="image-open"
               onClick={() => setPreview(image)}
-              aria-label={"预览图片：" + image.name}
+              aria-label={"Preview image: " + image.name}
             >
               <img src={image.url} alt={image.name} loading="lazy" />
               <span title={image.name}>{image.name}</span>
@@ -32,7 +32,7 @@ export default function ImageGallery({
                 size="sm"
                 variant="secondary"
                 className="image-remove"
-                aria-label={"移除图片：" + image.name}
+              aria-label={"Remove image: " + image.name}
                 onPress={() => onRemove(image.id)}
               >
                 <X size={13} />
@@ -71,7 +71,7 @@ export default function ImageGallery({
                     download={preview.name}
                   >
                     <Download size={16} />
-                    下载图片
+                    Download image
                   </a>
                 )}
               </Modal.Footer>

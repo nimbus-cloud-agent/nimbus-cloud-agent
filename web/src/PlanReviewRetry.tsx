@@ -23,7 +23,7 @@ export default function PlanReviewRetry({
       await api(`/sessions/${sessionId}/messages`, "POST", {
         client_msg_id: `plan-review-retry-${sessionId}-${seq}`,
         plan: true,
-        message: `计划评审通道已修复。请把下面已有的计划原样通过 exit_plan_mode 重新提交评审，等待我确认。无需重复调研、运行命令或读取文件，也不要开始实施。\n\n${plan}`,
+        message: `The plan review channel is available again. Resubmit the existing plan below exactly as written by calling exit_plan_mode, then wait for my approval. Do not repeat research, run commands, read files, or begin implementation.\n\n${plan}`,
       });
     } catch (e) {
       setError(String(e));
@@ -33,7 +33,7 @@ export default function PlanReviewRetry({
   return (
     <div className="plan-review-retry">
       <p>
-        这份计划因评审通道未连接而提交失败。通道现已修复，可以重新提交已有计划。
+        This plan could not be submitted because the review channel was disconnected. The channel is available again, so you can resubmit the existing plan.
       </p>
       <Button
         size="sm"
@@ -42,7 +42,7 @@ export default function PlanReviewRetry({
         onPress={resubmit}
       >
         <FileText size={15} />
-        {busy ? "正在重新提交…" : "重新提交计划评审"}
+        {busy ? "Resubmitting…" : "Resubmit for review"}
       </Button>
       {error && <p role="alert">{error}</p>}
     </div>

@@ -162,7 +162,7 @@ export default function Conversation({
                         title={
                           <span className="reasoning-label">
                             <BrainCircuit size={15} />
-                            思考过程
+                            Reasoning
                           </span>
                         }
                       >
@@ -184,7 +184,7 @@ export default function Conversation({
                     title={
                       <span className="reasoning-label">
                         <BrainCircuit size={15} />
-                        思考过程
+                        Reasoning
                       </span>
                     }
                   >
@@ -197,14 +197,14 @@ export default function Conversation({
         return (
           <section className="turn" key={o.id}>
             <div className="user-message">
-              <span className="message-author">你</span>
+              <span className="message-author">You</span>
               <ImageGallery images={o.images ?? []} />
               {o.content && <p>{o.content}</p>}
               <div className="delivery">
                 {["queued", "starting"].includes(o.status) && (
                   <>
                     <LoaderCircle size={12} className="spin" />
-                    {o.status === "queued" ? "排队中" : "正在启动 Agent"}
+                    {o.status === "queued" ? "Queued" : "Starting agent"}
                   </>
                 )}
                 {o.status === "failed" && (
@@ -221,7 +221,7 @@ export default function Conversation({
                         ).catch((e) => retryError(e.message))
                       }
                     >
-                      重发
+                      Retry
                     </Button>
                   </>
                 )}
@@ -233,7 +233,7 @@ export default function Conversation({
                   <Cloud size={18} />
                 </span>
                 <strong>Nimbus</strong>
-                <span>云端 Agent</span>
+                <span>Cloud agent</span>
               </div>
               {tools.length > 0 ? (
                 <ExecutionProcess
@@ -271,11 +271,11 @@ export default function Conversation({
                   {questions.some(
                     (q) => q.turn_id === o.turn_id && q.status === "pending",
                   )
-                    ? "等待你确认计划"
+                    ? "Waiting for your plan approval"
                     : calls.length > results.length
-                      ? "正在执行工具"
-                      : "正在思考与输出"}
-                  <span>输出实时保存</span>
+                      ? "Running tools"
+                      : "Thinking and responding"}
+                  <span>Output saved in real time</span>
                 </div>
               )}
               {o.outcome && (
@@ -287,9 +287,9 @@ export default function Conversation({
                   )}
                   {
                     {
-                      completed: "本轮已完成",
-                      interrupted: "本轮已中断 · 发送新消息即可继续",
-                      error: "本轮出错",
+                      completed: "Turn completed",
+                      interrupted: "Turn interrupted · Send a new message to continue",
+                      error: "Turn failed",
                     }[o.outcome]
                   }
                   {o.error && o.status === "delivered" && (

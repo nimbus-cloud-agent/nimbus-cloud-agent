@@ -1,4 +1,4 @@
 interface:
-  display_name: "Nimbus Dev 运维"
-  short_description: "运维 Nimbus 的 Render 与 Neon dev 环境，查看配置、日志、部署和休眠状态"
-  default_prompt: "使用 $nimbus-dev-ops 检查 dev 环境的 Render 与 Neon 状态、配置和最近错误日志。"
+  display_name: "Nimbus Dev Operations"
+  short_description: "Operate Nimbus's Render and Neon dev environment; inspect configuration, logs, deployments, and sleep state"
+  default_prompt: "Use $nimbus-dev-ops to inspect the Render and Neon status, configuration, or recent error logs for dev."

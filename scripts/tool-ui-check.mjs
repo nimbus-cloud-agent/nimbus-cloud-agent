@@ -7,7 +7,7 @@ const base = process.env.NIMBUS_UI_URL || "http://127.0.0.1:8080";
 const sid = "tool-ui-fixture";
 const session = {
   id: sid,
-  title: "工具调用展示验证",
+  title: "Tool call display verification",
   options: {
     mode: "ptc",
     model: "deepseek-flash",
@@ -31,7 +31,7 @@ const events = [
     callId: "root",
     name: "run_code",
     arguments: JSON.stringify({
-      description: "检查项目文件与构建结果",
+      description: "Inspect project files and build results",
       code: "const file = await tools.sandbox_read_file({path:'/workspace/README.md'});\nconsole.log(file);",
     }),
   }),
@@ -80,14 +80,14 @@ const events = [
   event(7, "tool/result", {
     message: {
       toolCallId: "root",
-      content: [{ type: "text", text: "检查完成" }],
+      content: [{ type: "text", text: "Inspection complete" }],
     },
   }),
   event(8, "assistant/message", {
     step: 1,
     turn: 1,
     message: {
-      content: [{ type: "text", text: "已读取项目文档。检查脚本尚未配置。" }],
+      content: [{ type: "text", text: "Read the project documentation. No inspection script is configured yet." }],
     },
   }),
   event(9, "turn/end", { turn: 1 }),
@@ -111,7 +111,7 @@ const outbox = [
   {
     id: "a",
     turn_id: "a",
-    content: "检查项目文件",
+    content: "Inspect project files",
     delivered_seq: 1,
     status: "delivered",
     outcome: "completed",
@@ -119,7 +119,7 @@ const outbox = [
   {
     id: "b",
     turn_id: "b",
-    content: "构建项目",
+    content: "Build the project",
     delivered_seq: 11,
     status: "delivered",
     outcome: "",
@@ -127,7 +127,7 @@ const outbox = [
   {
     id: "c",
     turn_id: "c",
-    content: "停止命令",
+    content: "Stop command",
     delivered_seq: 21,
     status: "delivered",
     outcome: "interrupted",
@@ -189,7 +189,7 @@ try {
   );
   assert.equal(
     await page
-      .getByText("已读取项目文档。检查脚本尚未配置。", { exact: true })
+      .getByText("Read the project documentation. No inspection script is configured yet.", { exact: true })
       .isVisible(),
     true,
   );
@@ -206,7 +206,7 @@ try {
       .isVisible(),
     true,
   );
-  await read.getByRole("button", { name: "复制文件内容", exact: true }).click();
+  await read.getByRole("button", { name: "Copy File contents", exact: true }).click();
   assert.equal(
     await page.evaluate(() => navigator.clipboard.readText()),
     "# Nimbus\nA cloud workspace.",
@@ -218,7 +218,7 @@ try {
   assert.equal(await exec.getAttribute("data-state"), "error");
   await rowTrigger(exec).click();
   assert.equal(
-    await exec.getByText("退出码 1", { exact: true }).isVisible(),
+    await exec.getByText("Exit code 1", { exact: true }).isVisible(),
     true,
   );
   await root.scrollIntoViewIfNeeded();

@@ -17,7 +17,7 @@ import (
 // Caller holds the per-session lock across provisioning and the tool operation.
 func (s *Server) ensureSandbox(ctx context.Context, sid string) (model.Sandbox, error) {
 	if _, deleting := s.deleting.Load(sid); deleting {
-		return model.Sandbox{}, fmt.Errorf("会话正在删除")
+		return model.Sandbox{}, fmt.Errorf("Chat is being deleted.")
 	}
 	if _, err := s.getSession(ctx, sid); err != nil {
 		return model.Sandbox{}, err
@@ -29,7 +29,7 @@ func (s *Server) ensureSandbox(ctx context.Context, sid string) (model.Sandbox, 
 	if err == nil && sb.State == "running" {
 		return sb, nil
 	}
-	s.provisioning.Store(sid, "正在创建 / 唤醒沙箱…")
+	s.provisioning.Store(sid, "Creating or resuming sandbox…")
 	s.updates.publish(sid, sandboxChanged)
 	defer func() { s.provisioning.Delete(sid); s.updates.publish(sid, sandboxChanged) }()
 	deadline := time.Now().Add(60 * time.Second)
@@ -45,7 +45,7 @@ func (s *Server) ensureSandbox(ctx context.Context, sid string) (model.Sandbox, 
 		}
 		s.capacity.Unlock()
 		if time.Now().After(deadline) {
-			return sb, fmt.Errorf("等待沙箱名额超时：已有 20 台运行中，请暂停空闲沙箱")
+			return sb, fmt.Errorf("Timed out waiting for sandbox capacity. All 20 slots are in use; pause an idle sandbox and try again.")
 		}
 		select {
 		case <-ctx.Done():
@@ -99,7 +99,7 @@ func (s *Server) ensureSandbox(ctx context.Context, sid string) (model.Sandbox, 
 func (s *Server) pause(ctx context.Context, sid string) error {
 	sb, err := s.getSandbox(ctx, sid)
 	if err != nil {
-		return fmt.Errorf("沙箱尚未创建: %w", err)
+		return fmt.Errorf("Sandbox has not been created: %w", err)
 	}
 	if sb.State == "paused" {
 		return nil

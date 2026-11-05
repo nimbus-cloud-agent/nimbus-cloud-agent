@@ -15,10 +15,10 @@ async function api(path, body, method = body ? "POST" : "GET") {
 }
 const s = await api("/sessions", {});
 await writeFile(".local/recovery-session.json", JSON.stringify(s));
-await api(`/sessions/${s.id}`, { title: "崩溃恢复验证" }, "PATCH");
+await api(`/sessions/${s.id}`, { title: "Crash recovery verification" }, "PATCH");
 const o = await api(`/sessions/${s.id}/messages`, {
   message:
-    "请写一篇很长的中文文章，逐段介绍 100 个 Python 编程技巧，每个技巧不少于 100 字。不要使用工具。",
+    "Write a long article introducing 100 Python programming tips, with at least 100 words per tip. Do not use tools.",
   client_msg_id: crypto.randomUUID(),
 });
 let saved;
@@ -73,7 +73,7 @@ console.log(
 );
 const next = await api(`/sessions/${s.id}/messages`, {
   message:
-    "继续，但不需要再写长文。只告诉我上一轮在做什么，并引用上轮已输出内容中的一句话。",
+    "Continue, but do not write another long article. Tell me what the previous turn was doing and quote one sentence from its output.",
   client_msg_id: crypto.randomUUID(),
 });
 let after;

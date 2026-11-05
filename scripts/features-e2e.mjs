@@ -71,19 +71,19 @@ const core = JSON.parse(await readFile(".local/e2e-session.json", "utf8"));
 const s = await api("/sessions", {});
 await api(
   `/sessions/${s.id}`,
-  { title: "功能验收 · Skill 与生命周期" },
+  { title: "Feature verification · Skills and lifecycle" },
   "PATCH",
 );
 const name = "e2e-policy-" + crypto.randomUUID().slice(0, 8),
   proof = "SKILL_DB_" + crypto.randomUUID();
 const skill = await api("/skills", {
   name,
-  description: "测试验收用 Skill；读取以获取验证字符串。",
+  description: "A test skill. Read it to retrieve the verification string.",
   enabled: true,
   files: [
     {
       path: "SKILL.md",
-      content: `此 Skill 的验证字符串是 ${proof}。读到后原样输出这个字符串。`,
+      content: `This skill's verification string is ${proof}. Output the string exactly as written.`,
     },
   ],
 });
@@ -91,7 +91,7 @@ const enabled = await done(
   s,
   await send(
     s,
-    `请调用 skill_read 读取名为 ${name} 的 Skill，告诉我其中的验证字符串，不要使用沙箱。`,
+    `Call skill_read to read the skill named ${name} and tell me its verification string. Do not use the sandbox.`,
   ),
 );
 assert.ok(
@@ -105,14 +105,14 @@ await api(`/skills/${skill.id}`, { ...skill, enabled: false }, "PUT");
 const disabled = await api("/sessions", {});
 await api(
   `/sessions/${disabled.id}`,
-  { title: "功能验收 · 沙箱隔离" },
+  { title: "Feature verification · Sandbox isolation" },
   "PATCH",
 );
 const missing = await done(
   disabled,
   await send(
     disabled,
-    `请调用 skill_read 读取名为 ${name} 的 Skill，若不可用如实告诉我，不用沙箱。`,
+    `Call skill_read to read the skill named ${name}. If it is unavailable, say so. Do not use the sandbox.`,
   ),
 );
 assert.ok(!JSON.stringify(missing.events).includes(proof));
@@ -139,7 +139,7 @@ const plan = await done(
   core,
   await send(
     core,
-    "当前是 Plan 模式。请用 sandbox_write_file 把计划文档保存为 /workspace/plan-proof.md，内容为 PLAN_WRITE_OK，不需要执行计划。然后简短确认写入。",
+    "Plan mode is active. Use sandbox_write_file to save a plan document containing PLAN_WRITE_OK to /workspace/plan-proof.md. Do not execute the plan. Briefly confirm that the file was written.",
   ),
 );
 assert.ok(
@@ -165,7 +165,7 @@ await terminal(
 console.log("PASS second Session gets separate sandbox and filesystem");
 const long = await send(
   s,
-  "请逐条详细讲解 100 个基础数学概念，每条至少 200 字。不使用工具。",
+  "Explain 100 fundamental math concepts in detail, with at least 200 words for each. Do not use tools.",
 );
 let visible = false;
 for (let i = 0; i < 90; i++) {

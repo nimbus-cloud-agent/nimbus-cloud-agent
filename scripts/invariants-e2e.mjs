@@ -20,7 +20,7 @@ const cid = crypto.randomUUID();
 const duplicate = await Promise.all(
   Array.from({ length: 5 }, () =>
     api(`/sessions/${s.id}/messages`, {
-      message: "只回答 OK，不使用工具。",
+      message: "Reply only with OK. Do not use tools.",
       client_msg_id: cid,
     }),
   ),
@@ -28,7 +28,7 @@ const duplicate = await Promise.all(
 assert.equal(new Set(duplicate.map((o) => o.id)).size, 1);
 console.log("PASS idempotent concurrent delivery");
 await api(`/sessions/${s.id}/messages`, {
-  message: "上一条让我回答什么？请简短回答，不使用工具。",
+  message: "What did I ask you to reply with in the previous message? Answer briefly. Do not use tools.",
   client_msg_id: crypto.randomUUID(),
 });
 let d;

@@ -171,10 +171,10 @@ func (s *Server) runTurn(ctx context.Context, o model.Outbox) (started bool) {
 			if err := s.appendRecord(persist, o.SessionID, o.ID, *event.Record); err != nil {
 				return err
 			}
-			if event.Record.Type == "user/message" && sess.Title == "新对话" {
+			if event.Record.Type == "user/message" && sess.Title == "New chat" {
 				title := []rune(o.Content)
 				if len(title) == 0 {
-					title = []rune("图片对话")
+					title = []rune("Image chat")
 				}
 				return s.S.UpdateSession(persist, sess.ID, store.SessionChanges{Title: ptr(string(title[:min(40, len(title))]))})
 			}

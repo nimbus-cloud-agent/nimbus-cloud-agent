@@ -16,13 +16,13 @@ import (
 func validateAnswer(questions []model.Question, answer model.QuestionAnswer) error {
 	if answer.Dismissed {
 		if len(answer.Answers) != 0 {
-			return fmt.Errorf("暂不决定不能同时提交答案")
+			return fmt.Errorf("A review cannot be dismissed and answered at the same time.")
 		}
 		return nil
 	}
 
 	if len(answer.Answers) != len(questions) {
-		return fmt.Errorf("请回答每个问题")
+		return fmt.Errorf("Answer every question.")
 	}
 	seen := map[string]bool{}
 	for _, a := range answer.Answers {
@@ -34,17 +34,17 @@ func validateAnswer(questions []model.Question, answer model.QuestionAnswer) err
 			}
 		}
 		if q == nil || seen[a.ID] {
-			return fmt.Errorf("问题不存在或重复")
+			return fmt.Errorf("Question is missing or duplicated.")
 		}
 		seen[a.ID] = true
 		if !q.MultiSelect && len(a.Selected) > 1 {
-			return fmt.Errorf("此问题只能选择一项")
+			return fmt.Errorf("Select exactly one option for this question.")
 		}
 		if len(a.Selected) == 0 && (a.Custom == nil || strings.TrimSpace(*a.Custom) == "") {
-			return fmt.Errorf("请选择或填写答案")
+			return fmt.Errorf("Select an option or provide an answer.")
 		}
 		if a.Custom != nil && len(*a.Custom) > 20000 {
-			return fmt.Errorf("修改意见不能超过 20 KB")
+			return fmt.Errorf("Feedback cannot exceed 20 KB.")
 		}
 		labels := map[string]bool{}
 		for _, o := range q.Options {
@@ -52,7 +52,7 @@ func validateAnswer(questions []model.Question, answer model.QuestionAnswer) err
 		}
 		for _, label := range a.Selected {
 			if !labels[label] {
-				return fmt.Errorf("选项不存在或重复")
+				return fmt.Errorf("Option is missing or duplicated.")
 			}
 			delete(labels, label)
 		}
@@ -80,7 +80,7 @@ func (s *Server) questionRoutes(r *gin.Engine) {
 			row, e := tx.LockQuestion(c.Request.Context(), sess.ID, c.Param("question"))
 			if e != nil {
 				status = 404
-				return fmt.Errorf("评审不存在")
+				return fmt.Errorf("Review not found.")
 			}
 			q := model.UserQuestion(row)
 			if e := validateAnswer(q.Questions, answer); e != nil {
@@ -92,7 +92,7 @@ func (s *Server) questionRoutes(r *gin.Engine) {
 					return nil
 				}
 				status = 409
-				return fmt.Errorf("评审已结束，请查看最新状态")
+				return fmt.Errorf("This review has ended. Check its latest status.")
 			}
 			next := "answered"
 			if answer.Dismissed {

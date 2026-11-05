@@ -76,8 +76,8 @@ try {
     "stty -echo; export NIMBUS_TERMINAL_SESSION=GO_PTY_PERSISTED; stty size\r",
   );
   await until(() => output.includes("34 112"), "PTY resize");
-  send("printf '\\n中文终端_OK\\n'\r");
-  await until(() => output.includes("中文终端_OK"), "UTF-8 output");
+  send("printf '\\ncafé_terminal_OK\\n'\r");
+  await until(() => output.includes("café_terminal_OK"), "UTF-8 output");
 
   const page = await browser.newPage({
     viewport: { width: 1440, height: 1000 },

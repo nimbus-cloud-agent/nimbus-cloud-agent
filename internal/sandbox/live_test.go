@@ -47,17 +47,17 @@ func TestLiveE2BControlPlane(t *testing.T) {
 	if err != nil || provider.Lifecycle.OnTimeout != "pause" || provider.Lifecycle.AutoResume {
 		t.Fatalf("lifecycle: %+v, %v", provider.Lifecycle, err)
 	}
-	_, err = c.WriteFile(ctx, info.SandboxID, "/workspace/go-proof.txt", "GO_E2B_OK 中文\n")
+	_, err = c.WriteFile(ctx, info.SandboxID, "/workspace/go-proof.txt", "GO_E2B_OK café\n")
 	if err != nil {
 		t.Fatal(err)
 	}
 	file, err := c.ReadFile(ctx, info.SandboxID, "/workspace/go-proof.txt")
-	if err != nil || file.Content != "GO_E2B_OK 中文\n" {
+	if err != nil || file.Content != "GO_E2B_OK café\n" {
 		t.Fatal(file, err)
 	}
 	var output strings.Builder
 	result, err := c.Exec(ctx, info.SandboxID, model.SandboxArgs{Command: "cat /workspace/go-proof.txt; printf ERR >&2; exit 7"}, func(chunk model.CommandOutput) error { output.WriteString(chunk.Text); return nil })
-	if err != nil || result.ExitCode != 7 || result.Stderr != "ERR" || !strings.Contains(output.String(), "GO_E2B_OK 中文") {
+	if err != nil || result.ExitCode != 7 || result.Stderr != "ERR" || !strings.Contains(output.String(), "GO_E2B_OK café") {
 		t.Fatal(result, err)
 	}
 	t.Log("PASS Go SDK files, streaming command, Unicode and nonzero exit")

@@ -12,7 +12,7 @@ async function api(path, body, method = body ? "POST" : "GET") {
   return d;
 }
 const m = await api("/mcp/servers", {
-  name: "本地 OAuth 验证",
+  name: "Local OAuth verification",
   url: "http://127.0.0.1:18081/mcp",
   enabled: true,
 });
@@ -41,10 +41,10 @@ const status = await fetch("http://127.0.0.1:18081/status").then((r) =>
 assert.ok(status.refreshes > 0);
 console.log("PASS refresh token after 401");
 const s = await api("/sessions", {});
-await api(`/sessions/${s.id}`, { title: "OAuth + MCP 验证" }, "PATCH");
+await api(`/sessions/${s.id}`, { title: "OAuth + MCP verification" }, "PATCH");
 const o = await api(`/sessions/${s.id}/messages`, {
   message:
-    "调用 MCP 的 echo 工具，text 参数为 hello-nimbus，返回真实结果，不要调用沙箱。",
+    "Call the MCP echo tool with the text argument hello-nimbus and return the actual result. Do not use the sandbox.",
   client_msg_id: crypto.randomUUID(),
 });
 let done;

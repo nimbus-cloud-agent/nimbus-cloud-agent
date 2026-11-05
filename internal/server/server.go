@@ -195,7 +195,7 @@ func (s *Server) session(c *gin.Context) (model.Session, bool) {
 	sess, e = s.getSession(c.Request.Context(), c.Param("id"))
 	if e != nil {
 		if errors.Is(e, store.ErrNotFound) {
-			s.fail(c, 404, fmt.Errorf("会话不存在"))
+			s.fail(c, 404, fmt.Errorf("Chat not found."))
 		} else {
 			s.fail(c, 500, e)
 		}

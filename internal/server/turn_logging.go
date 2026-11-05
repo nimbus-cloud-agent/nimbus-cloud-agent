@@ -32,7 +32,7 @@ func (s *Server) finishTurn(ctx context.Context, o model.Outbox, outcome string,
 	if current.Status != "delivered" {
 		changes.Status = ptr("failed")
 		if turnErr == nil {
-			turnErr = fmt.Errorf("本轮未能送达 Harness")
+			turnErr = fmt.Errorf("This turn could not be delivered to the Harness.")
 		}
 		if outcome != "interrupted" {
 			outcome = "error"
