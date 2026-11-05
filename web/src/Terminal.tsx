@@ -26,6 +26,7 @@ export default function TerminalPanel({
   const [busy, setBusy] = useState(false),
     [connection, setConnection] = useState("connecting"),
     [generation, setGeneration] = useState(0);
+  const pauseRequested = useRef(false);
   const connected = connection === "connected";
   const [fontSize, setFontSize] = useState(() => {
     try {
@@ -53,7 +54,11 @@ export default function TerminalPanel({
     } catch {}
   }, [fontSize]);
   useEffect(() => {
-    if (!session || state !== "running" || !el.current) return;
+    if (!session || state !== "running" || !el.current) {
+      if (state !== "running") pauseRequested.current = false;
+      return;
+    }
+    pauseRequested.current = false;
     setConnection("connecting");
     const term = new XTerm({
       fontSize,
@@ -107,13 +112,16 @@ export default function TerminalPanel({
         resize();
       }
       if (msg.error) {
-        term.writeln("\r\n" + msg.error);
-        onError(msg.error);
+        if (!pauseRequested.current) {
+          term.writeln("\r\n" + msg.error);
+          onError(msg.error);
+        }
       }
     };
     ws.onclose = () => {
       setConnection("disconnected");
-      term.writeln("\r\n\x1b[90m连接已断开，可点击重新连接。\x1b[0m");
+      if (!pauseRequested.current)
+        term.writeln("\r\n\x1b[90m连接已断开，可点击重新连接。\x1b[0m");
     };
     const input = term.onData((data) => {
       if (ws.readyState === 1) {
@@ -148,10 +156,12 @@ export default function TerminalPanel({
   }, [session?.id, state, generation]);
   async function action(which: string) {
     if (!session) return;
+    if (which === "pause") pauseRequested.current = true;
     setBusy(true);
     try {
       await api(`/sessions/${session.id}/sandbox/${which}`, "POST");
     } catch (e) {
+      if (which === "pause") pauseRequested.current = false;
       onError(String(e));
     } finally {
       setBusy(false);
