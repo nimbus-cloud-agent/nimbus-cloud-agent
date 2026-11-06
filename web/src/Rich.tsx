@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import Markdown from "react-markdown";
+import Markdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { listLibrary } from "./api";
 
@@ -98,6 +98,11 @@ export default function Rich({
     <div className="markdown">
       <Markdown
         remarkPlugins={[remarkGfm]}
+        urlTransform={(url, key) =>
+          key === "href" && LIBRARY_HREF_RE.test(url)
+            ? url
+            : defaultUrlTransform(url)
+        }
         components={{
           a: ({ href, children: linkChildren }) => {
             const m = href ? LIBRARY_HREF_RE.exec(href) : null;

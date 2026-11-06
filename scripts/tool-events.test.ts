@@ -4,6 +4,7 @@ import {
   buildToolTree,
   flattenTools,
   toolFailed,
+  streamingToolCalls,
 } from "../web/src/tool-events.ts";
 import { decodeEvent } from "../web/src/event-codec.ts";
 import type { NativeData } from "../web/src/api.ts";
@@ -153,4 +154,25 @@ test("event ingress normalizes encoded arguments and results before rendering", 
   });
   assert.equal(unexpected.tool?.args.command, undefined);
   assert.equal(unexpected.tool?.args.plan, undefined);
+});
+
+test("streamed arguments preserve incomplete JSON and separate interleaved calls until handoff", () => {
+  const frames = [
+    { id: 1, turn_id: "turn", payload: { type: "chunk", chunk: {
+      type: "tool-call-delta", id: "a", name: "run_code", argumentsDelta: '{"code":"line\\',
+    } } },
+    { id: 2, turn_id: "turn", payload: { type: "chunk", chunk: {
+      type: "tool-call-delta", id: "b", name: "sandbox_exec", argumentsDelta: '{"command":"pwd"}',
+    } } },
+    { id: 3, turn_id: "turn", payload: { type: "chunk", chunk: {
+      type: "tool-call-delta", id: "a", argumentsDelta: 'n中文',
+    } } },
+  ];
+  const partial = streamingToolCalls(frames.slice(0, 1), new Set());
+  assert.equal(partial[0].argumentsText, '{"code":"line\\');
+  const pending = streamingToolCalls(frames, new Set(["b"]));
+  assert.deepEqual(pending, [{
+    id: "a", name: "run_code", argumentsText: '{"code":"line\\n中文',
+  }]);
+  assert.deepEqual(streamingToolCalls(frames, new Set(["a", "b"])), []);
 });

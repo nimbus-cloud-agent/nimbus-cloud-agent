@@ -66,7 +66,7 @@ The Library is a global (not per-session) object store in PostgreSQL. Files live
 | `GET /library/:id` | Read one file as `{id,name,mime_type,size_bytes,version,created_at,updated_at,versions:[{version,size_bytes,sha256,created_at}]}` |
 | `GET /library/:id/content?version=N` | Stream one version's raw bytes; `version` defaults to the current version |
 
-The content endpoint sets `Content-Type` to the stored MIME type, `Content-Disposition: inline`, and `X-Content-Type-Options: nosniff`. Stored HTML additionally gets `Content-Security-Policy: sandbox`, so a previewed page can never run as the app's own page. An invalid id, a missing file, or a missing version returns `404`. There is no delete or upload endpoint; the agent tools below are the only writers.
+The content endpoint sets `Content-Type` to the stored MIME type, `Content-Disposition: inline`, and `X-Content-Type-Options: nosniff`. Stored HTML additionally gets `Content-Security-Policy: sandbox allow-scripts`: scripts can render interactive pages, but the sandbox does not grant same-origin access to the app's DOM, cookies, or storage. An invalid id, a missing file, or a missing version returns `404`. There is no delete or upload endpoint; the agent tools below are the only writers.
 
 The agent tools are dispatched by the Go control plane:
 

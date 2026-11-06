@@ -96,17 +96,20 @@ export function flattenTools(nodes: ToolNode[]): ToolNode[] {
 export function streamingToolCalls(
   frames: StreamFrame[],
   landed: Set<string>,
-): { id: string; name: string; chars: number }[] {
-  const calls = new Map<string, { name: string; chars: number }>();
+): { id: string; name: string; argumentsText: string }[] {
+  const calls = new Map<string, { name: string; chunks: string[] }>();
   for (const f of frames) {
     const chunk = f.payload.chunk;
-    if (chunk?.type !== "tool-call-delta" || !chunk.id) continue;
-    const call = calls.get(chunk.id) ?? { name: "tool", chars: 0 };
+    if (chunk?.type !== "tool-call-delta" || !chunk.id || landed.has(chunk.id))
+      continue;
+    const call = calls.get(chunk.id) ?? { name: "tool", chunks: [] };
     if (chunk.name) call.name = chunk.name;
-    call.chars += chunk.argumentsDelta?.length ?? 0;
+    if (chunk.argumentsDelta) call.chunks.push(chunk.argumentsDelta);
     calls.set(chunk.id, call);
   }
-  return [...calls]
-    .filter(([id]) => !landed.has(id))
-    .map(([id, call]) => ({ id, ...call }));
+  return [...calls].map(([id, call]) => ({
+    id,
+    name: call.name,
+    argumentsText: call.chunks.join(""),
+  }));
 }

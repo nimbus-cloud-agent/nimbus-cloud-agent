@@ -5,6 +5,7 @@ import { chromium } from "playwright";
 
 const base = process.env.NIMBUS_UI_URL || "http://127.0.0.1:8080";
 const sid = "tool-ui-fixture";
+const libraryId = "e60ce60b-3e7a-4c41-8839-1db6f60cc2e9";
 const session = {
   id: sid,
   title: "Tool call display verification",
@@ -87,7 +88,7 @@ const events = [
     step: 1,
     turn: 1,
     message: {
-      content: [{ type: "text", text: "Read the project documentation. No inspection script is configured yet." }],
+      content: [{ type: "text", text: `Read the project documentation. No inspection script is configured yet.\n\n[Preview saved page](nimbus://library/${libraryId})\n\n[Unsafe link](javascript:alert(1)) [Invalid Library link](nimbus://library/not-an-id)` }],
     },
   }),
   event(9, "turn/end", { turn: 1 }),
@@ -165,6 +166,18 @@ await page.route("**/api/**", (route) => {
   if (path.endsWith("/events"))
     return route.fulfill({
       json: { events, outbox, frames: [], questions: [], has_more: false },
+    });
+  if (path === `/api/library/${libraryId}`)
+    return route.fulfill({ json: {
+      id: libraryId, name: "preview.html", mime_type: "text/html",
+      size_bytes: 200, version: 1, updated_at: "2026-11-06T06:05:36Z",
+      versions: [{ version: 1, size_bytes: 200, created_at: "2026-11-06T06:05:36Z" }],
+    } });
+  if (path === `/api/library/${libraryId}/content`)
+    return route.fulfill({
+      contentType: "text/html",
+      headers: { "Content-Security-Policy": "sandbox allow-scripts" },
+      body: '<style>#preview-content{opacity:0}</style><h1 id="preview-content">Interactive preview</h1><script>document.getElementById("preview-content").style.opacity="1";</script>',
     });
   return route.fulfill({
     status: 404,
@@ -284,9 +297,91 @@ try {
   await page.screenshot({ path: ".local/tool-ui-mobile.png", fullPage: true });
   await rowTrigger(root).click();
   assert.equal(await root.locator(".tool-detail").count(), 0);
+  // Partial JSON must be readable before the model finishes the call, survive
+  // further deltas and user folding, and be replaced by the native tool row.
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  const argumentsText = JSON.stringify({
+    code: 'console.log("<img src=x onerror=alert(1)>");\nconsole.log("中文");',
+    description: "Inspect streamed arguments",
+  });
+  const split = argumentsText.indexOf("\\n") + 1;
+  const prefix = argumentsText.slice(0, split);
+  await page.evaluate((argumentsDelta) => {
+    const stream = window.__streams.find((s) =>
+      new URL(s.url).pathname.endsWith("/tool-ui-fixture/stream"),
+    );
+    stream.dispatchEvent(new MessageEvent("frame", {
+      data: JSON.stringify({
+        id: 101, turn_id: "b", payload: {
+          type: "chunk", attemptId: "pending", chunk: {
+            type: "tool-call-delta", id: "incoming", name: "run_code", argumentsDelta,
+          },
+        },
+      }),
+    }));
+  }, prefix);
+  const incoming = page.locator('[data-tool-id="incoming"]');
+  await incoming.locator("pre").waitFor();
+  assert.equal(await incoming.locator("pre").textContent(), prefix);
+  assert.equal(await incoming.locator("pre img").count(), 0);
+  await incoming.getByRole("button", { name: "Copy Arguments (streaming JSON)", exact: true }).click();
+  assert.equal(await page.evaluate(() => navigator.clipboard.readText()), prefix);
+  await rowTrigger(incoming).click();
+  await page.evaluate((argumentsDelta) => {
+    const stream = window.__streams.find((s) =>
+      new URL(s.url).pathname.endsWith("/tool-ui-fixture/stream"),
+    );
+    stream.dispatchEvent(new MessageEvent("frame", {
+      data: JSON.stringify({
+        id: 102, turn_id: "b", payload: {
+          type: "chunk", attemptId: "pending", chunk: {
+            type: "tool-call-delta", id: "incoming", argumentsDelta,
+          },
+        },
+      }),
+    }));
+  }, argumentsText.slice(split));
+  assert.equal(await rowTrigger(incoming).getAttribute("aria-expanded"), "false");
+  await rowTrigger(incoming).click();
+  assert.equal(await incoming.locator("pre").textContent(), argumentsText);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await incoming.scrollIntoViewIfNeeded();
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  await page.screenshot({ path: ".local/tool-arguments-streaming.png", fullPage: true });
+  await page.evaluate((argumentsText) => {
+    const stream = window.__streams.find((s) =>
+      new URL(s.url).pathname.endsWith("/tool-ui-fixture/stream"),
+    );
+    stream.dispatchEvent(new MessageEvent("session", {
+      data: JSON.stringify({
+        seq: 13, type: "tool/call", payload: {
+          seq: 13, type: "tool/call", time: 1793440013000,
+          data: { callId: "incoming", name: "run_code", arguments: argumentsText },
+        },
+      }),
+    }));
+  }, argumentsText);
+  await page.waitForFunction(() => !document.querySelector('[data-tool-id="incoming"][data-streaming]'));
+  if (await trigger(groups.nth(1)).getAttribute("aria-expanded") === "false")
+    await trigger(groups.nth(1)).click();
+  assert.equal(await incoming.count(), 1);
+  await rowTrigger(incoming).click();
+  assert.equal(await incoming.locator("pre").textContent(), JSON.parse(argumentsText).code);
+  assert.equal(await page.getByRole("link", { name: "Unsafe link", exact: true }).getAttribute("href"), "");
+  assert.equal(await page.getByRole("link", { name: "Invalid Library link", exact: true }).getAttribute("href"), "");
+  await page.getByRole("link", { name: "Preview saved page", exact: true }).click();
+  const preview = page.frameLocator(".library-preview-frame");
+  await preview.locator("#preview-content").waitFor();
+  assert.equal(await preview.locator("#preview-content").evaluate(el => getComputedStyle(el).opacity), "1");
+  const previewFrame = await page.locator(".library-preview-frame").elementHandle();
+  const inner = await previewFrame.contentFrame();
+  assert.equal(await inner.evaluate(() => {
+    try { return !!parent.document; } catch { return false; }
+  }), false);
+  await page.locator(".library-preview-dialog").getByRole("button", { name: "Close", exact: true }).filter({ hasText: "Close" }).click();
   assert.deepEqual(errors, []);
   console.log(
-    "PASS grouped/individual folds, nested PTC, native failure states, copy, keyboard, SSE updates, stopped calls, mobile layout",
+    "PASS tool disclosures, stream growth/handoff, mobile layout, clickable Library links, rejected unsafe URLs and isolated interactive preview",
   );
 } finally {
   await browser.close();

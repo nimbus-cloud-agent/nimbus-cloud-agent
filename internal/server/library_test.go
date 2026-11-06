@@ -134,7 +134,7 @@ func TestLibraryHTTPListDetailContent(t *testing.T) {
 		t.Fatalf("detail body: %s, %v", body, err)
 	}
 	code, body, headers := libraryRequest(r, "GET", "/library/"+file.ID+"/content")
-	if code != 200 || string(body) != content || headers["Content-Type"] != "text/html" || headers["Content-Disposition"] != "inline" || headers["Content-Security-Policy"] != "sandbox" {
+	if code != 200 || string(body) != content || headers["Content-Type"] != "text/html" || headers["Content-Disposition"] != "inline" || headers["Content-Security-Policy"] != "sandbox allow-scripts" {
 		t.Fatalf("content: %d %q headers %v", code, body, headers)
 	}
 	code, body, headers = libraryRequest(r, "GET", "/library/"+file.ID+"/content?version=1")

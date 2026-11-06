@@ -55,19 +55,42 @@ function sizeLabel(chars: number) {
  * exist once the whole call is assembled, so this row carries the progress in
  * the meantime and is replaced by ToolCall when the call starts executing.
  */
-export function PendingToolCall({ name, chars }: { name: string; chars: number }) {
+export function PendingToolCall({
+  id,
+  name,
+  argumentsText,
+}: {
+  id: string;
+  name: string;
+  argumentsText: string;
+}) {
+  const [open, setOpen] = useState(true);
   const { label, Icon } = toolInfo({ name, args: { formatted: "{}" } });
   return (
-    <div className="tool-call" data-state="running">
-      <div className="tool-row pending-tool">
-        <Icon size={15} className="tool-row-icon" />
-        <span className="tool-row-label">{label}</span>
-        <span className="tool-row-summary">Receiving arguments</span>
-        <span className="tool-row-state">
-          <LoaderCircle size={13} className="spin" />
-          <span>{sizeLabel(chars)}</span>
-        </span>
-      </div>
+    <div className="tool-call" data-tool-id={id} data-streaming="true" data-state="running">
+      <Fold
+        className="tool-disclosure"
+        label={`${label}: receiving arguments`}
+        open={open}
+        onOpenChange={setOpen}
+        title={
+          <span className="tool-row">
+            <Icon size={15} className="tool-row-icon" />
+            <span className="tool-row-label">{label}</span>
+            <span className="tool-row-summary">Receiving arguments</span>
+            <span className="tool-row-state">
+              <LoaderCircle size={13} className="spin" />
+              <span>{sizeLabel(argumentsText.length)}</span>
+            </span>
+          </span>
+        }
+      >
+        {() => (
+          <div className="tool-detail">
+            <CodeSection label="Arguments (streaming JSON)" value={argumentsText} />
+          </div>
+        )}
+      </Fold>
     </div>
   );
 }

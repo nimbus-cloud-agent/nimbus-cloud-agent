@@ -278,8 +278,9 @@ export default function Conversation({
                 streaming.map((call) => (
                   <PendingToolCall
                     key={call.id}
+                    id={call.id}
                     name={call.name}
-                    chars={call.chars}
+                    argumentsText={call.argumentsText}
                   />
                 ))}
               {!o.outcome && o.status !== "failed" && (

@@ -65,8 +65,9 @@ func (s *Server) libraryRoutes(r *gin.Engine) {
 		}
 		headers := map[string]string{"Content-Disposition": "inline", "X-Content-Type-Options": "nosniff"}
 		if file.MimeType == "text/html" {
-			// A stored HTML file must never run as the app's own page.
-			headers["Content-Security-Policy"] = "sandbox"
+			// Scripts may run, but the sandbox keeps an opaque origin and
+			// forbids access to the app's DOM, cookies, and local storage.
+			headers["Content-Security-Policy"] = "sandbox allow-scripts"
 		}
 		reader := store.NewVersionReader(c.Request.Context(), s.S, version.ID, version.SizeBytes)
 		c.DataFromReader(200, version.SizeBytes, file.MimeType, reader, headers)

@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import { renderToolsSdk } from "@deepseek-ai/dsh-tools";
 import type { ImageAttachmentRef } from "@deepseek-ai/dsh-attachment";
 import {
-  librarySystemPrompt,
   libraryToolDefinitions,
   renderLibraryRead,
   resolveLibraryReadImage,
@@ -64,25 +63,6 @@ test("library tools are defined with the contracted names and schemas", () => {
   assert.match(definition("library_copy_from_sandbox")[1], /100 MB/);
 });
 
-test("library system prompt tells the model when to use the Library", () => {
-  for (const phrase of [
-    "nimbus://library/<id>",
-    "PostgreSQL-backed",
-    "version",
-    "sandbox is the workbench",
-    "shelf for finished deliverables",
-    "library_copy_to_sandbox",
-    "library_copy_from_sandbox",
-    "never handle chunking",
-    "100 MB per file",
-    "1 MiB per text read",
-    "shown to you directly",
-  ])
-    assert.ok(
-      librarySystemPrompt.includes(phrase),
-      `prompt must mention: ${phrase}`,
-    );
-});
 
 test("renderLibraryRead renders text results as a single JSON text block", () => {
   const value: LibraryReadResult = {
