@@ -71,7 +71,7 @@ func TestTypedJSONAtDAOBoundary(t *testing.T) {
 	if err := s.ResolveQuestion(ctx, question.ID, "answered", answer, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	review, err := s.Question(ctx, question.ID)
+	review, err := s.Question(ctx, session.ID, question.ID)
 	if err != nil || review.Answer == nil || review.Answer.Answers[0].Selected[0] != "Yes" || review.Questions[0].Intent.Kind != "plan-review" {
 		t.Fatalf("typed review: %+v, %v", review, err)
 	}

@@ -49,6 +49,7 @@ func ValidateSkill(x model.Skill) error {
 	return nil
 }
 func (s *Server) settingsRoutes(r *gin.Engine) {
+	s.skillQueryRoutes(r)
 	r.GET("/api/settings", func(c *gin.Context) {
 		mask := func(k string) string {
 			if k == "" {
@@ -88,18 +89,7 @@ func (s *Server) settingsRoutes(r *gin.Engine) {
 		}
 		c.JSON(200, gin.H{"ok": true})
 	})
-	r.GET("/api/skills", func(c *gin.Context) {
-		rows, err := s.S.Skills(c.Request.Context(), false)
-		if err != nil {
-			s.fail(c, 500, err)
-			return
-		}
-		x := make([]model.Skill, 0, len(rows))
-		for _, row := range rows {
-			x = append(x, skillModel(row))
-		}
-		c.JSON(200, x)
-	})
+	r.GET("/api/skills", s.listSkills)
 	save := func(c *gin.Context) {
 		x, e := decode[model.Skill](c)
 		if e != nil {

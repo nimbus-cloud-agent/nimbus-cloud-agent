@@ -1,3 +1,4 @@
+import { useCallback, useLayoutEffect } from "react";
 import {
   Cloud,
   Check,
@@ -12,315 +13,318 @@ import PlanReviewRetry from "./PlanReviewRetry";
 import { Fold } from "./components";
 import {
   api,
-  type Event,
+  loadPlanReview,
+  type TurnSummary,
   type Outbox,
   type UserQuestion,
-  type StreamFrame,
 } from "./api";
+import {
+  useTurnTrace,
+  useTurnMetadata,
+  useTurnDisclosure,
+  TraceStatus,
+} from "./TurnTrace";
 import ImageGallery from "./ImageGallery";
 import { ToolCall, ExecutionProcess, PendingToolCall } from "./ToolCalls";
-import {
-  buildToolTree,
-  flattenTools,
-  streamingToolCalls,
-  contentText as text,
-} from "./tool-events";
 
-export default function Conversation({
-  sessionId,
-  events,
-  outbox,
-  frames,
-  questions,
-  retryError,
-  onOpenLibraryFile,
-}: {
+type ConversationProps = {
   sessionId: string;
-  events: Event[];
   outbox: Outbox[];
-  frames: StreamFrame[];
+  turns: TurnSummary[];
   questions: UserQuestion[];
   retryError: (s: string) => void;
   onOpenLibraryFile?: (id: string) => void;
-}) {
+  onOutput: () => void;
+};
+
+export default function Conversation(props: ConversationProps) {
   return (
     <>
-      {outbox.map((o, i) => {
-        const next =
-          outbox.slice(i + 1).find((n) => n.delivered_seq != null)
-            ?.delivered_seq ?? Infinity;
-        const rows = events.filter(
-          (e) => e.seq >= (o.delivered_seq ?? Infinity) && e.seq < next,
-        );
-        const streams = new Map<
-          string,
-          {
-            text: string;
-            reasoning: string;
-            step?: number;
-            turn?: number;
-            ended?: number;
-          }
-        >();
-        const turnFrames = frames.filter((f) => f.turn_id === o.turn_id);
-        for (const f of turnFrames) {
-          const p = f.payload;
-          if (!p.attemptId) continue;
-          let st = streams.get(p.attemptId);
-          if (!st) {
-            st = { text: "", reasoning: "" };
-            streams.set(p.attemptId, st);
-          }
-          if (p.type === "start") {
-            st.step = p.step;
-            st.turn = p.turn;
-          }
-          if (p.chunk?.type === "text-delta") st.text += p.chunk.text ?? "";
-          if (p.chunk?.type === "reasoning-delta")
-            st.reasoning += p.chunk.text ?? p.chunk.reasoning ?? "";
-          if (p.type === "end") st.ended = p.outcome?.seq;
-        }
-        const calls = rows.filter((e) => e.type === "tool/call");
-        const results = rows.filter((e) => e.type === "tool/result");
-        const assistants = rows.filter((e) => e.type === "assistant/message");
-        const failedReview = [...rows]
-          .reverse()
-          .find(
-            (e) =>
-              e.type === "tool/ptc-dispatch" &&
-              e.payload.data.name === "exit_plan_mode" &&
-              e.payload.data.isError &&
-              typeof e.tool?.args.plan === "string" &&
-              text(e.payload.data.content).includes(
-                "no user-questions channel is available",
-              ),
-          );
-        const unresolved = [...streams.values()].filter(
-          (st) =>
-            !assistants.some(
-              (e) =>
-                e.seq === st.ended ||
-                (e.payload.data.step === st.step &&
-                  e.payload.data.turn === st.turn),
-            ),
-        );
-        const tools = buildToolTree(rows, turnFrames);
-        const allTools = flattenTools(tools);
-        const landed = new Set(allTools.map((tool) => tool.id));
-        const streaming = streamingToolCalls(turnFrames, landed);
-        const bySeq = new Map(tools.map((tool) => [tool.seq, tool]));
-        const lastToolSeq = Math.max(-1, ...allTools.map((t) => t.seq));
-        const finalMessage = [...assistants]
-          .reverse()
-          .find(
-            (e) => e.seq > lastToolSeq && text(e.payload.data.message?.content),
-          );
-        const pendingReviews = questions.filter(
-          (q) => q.turn_id === o.turn_id && q.status === "pending",
-        );
-        const waiting = new Set(
-          pendingReviews.flatMap((q) =>
-            q.questions
-              .map((item) => item.intent?.callId)
-              .filter((id): id is string => !!id),
-          ),
-        );
-        const turnEnd = rows.find((e) => e.type === "turn/end");
-        const started = events.find(
-          (e) =>
-            e.type === "turn/start" &&
-            e.payload.data.turn === turnEnd?.payload.data.turn,
-        );
-        const duration =
-          started && turnEnd
-            ? ((turnEnd.payload.time ?? 0) - (started.payload.time ?? 0)) / 1000
-            : undefined;
-        const processContent = (
-          <>
-            {rows
-              .filter((e) => e.type === "assistant/message" || bySeq.has(e.seq))
-              .map((e) => {
-                const tool = bySeq.get(e.seq);
-                if (tool)
-                  return (
-                    <ToolCall
-                      key={tool.id}
-                      node={tool}
-                      settled={!!o.outcome}
-                      waiting={waiting}
+      {props.outbox.map((o, i) => (
+        <ConversationTurn
+          key={o.turn_id}
+          {...props}
+          o={o}
+          summary={props.turns.find((t) => t.turn_id === o.turn_id)}
+          last={i === props.outbox.length - 1}
+        />
+      ))}
+    </>
+  );
+}
+
+function Reasoning({
+  sessionId,
+  turnId,
+  seq,
+  attemptId,
+  running,
+  onOpenLibraryFile,
+}: {
+  sessionId: string;
+  turnId: string;
+  seq?: number;
+  attemptId?: string;
+  running: boolean;
+  onOpenLibraryFile?: (id: string) => void;
+}) {
+  const [open, setOpen] = useTurnDisclosure(
+    `reasoning:${turnId}:${seq ?? attemptId}`,
+  );
+  const query =
+    seq != null
+      ? `seq=${seq}`
+      : `attempt_id=${encodeURIComponent(attemptId!)}&chunk_types=reasoning-delta`;
+  const detail = useTurnTrace(sessionId, turnId, open, running, query);
+  const content = detail.trace?.events[0]?.payload.data.message?.content;
+  const reasoning =
+    seq != null
+      ? Array.isArray(content)
+        ? content
+            .filter((block) => block.type === "reasoning")
+            .map((block) => block.text ?? block.reasoning ?? "")
+            .join("")
+        : ""
+      : (detail.trace?.frames ?? [])
+          .map(
+            (frame) =>
+              frame.payload.chunk?.text ?? frame.payload.chunk?.reasoning ?? "",
+          )
+          .join("");
+  return (
+    <Fold
+      className="reasoning-fold"
+      open={open}
+      onOpenChange={setOpen}
+      title={
+        <span className="reasoning-label">
+          <BrainCircuit size={15} />
+          Reasoning
+        </span>
+      }
+    >
+      <TraceStatus {...detail} />
+      <Rich onOpenLibraryFile={onOpenLibraryFile}>{reasoning}</Rich>
+    </Fold>
+  );
+}
+
+function ConversationTurn({
+  sessionId,
+  o,
+  summary,
+  questions,
+  retryError,
+  onOpenLibraryFile,
+  last,
+  onOutput,
+}: ConversationProps & { o: Outbox; summary?: TurnSummary; last: boolean }) {
+  const running = !o.outcome && o.status !== "failed";
+  const [open, setOpen] = useTurnDisclosure(`process:${o.turn_id}`, running);
+  const detail = useTurnMetadata(sessionId, o.turn_id, open, running);
+  const metadata = detail.metadata;
+  useLayoutEffect(() => {
+    onOutput();
+  }, [metadata, onOutput]);
+  const retrySeq = summary?.plan_review_retry?.seq;
+  const loadRetryPlan = useCallback(
+    (signal: AbortSignal) =>
+      loadPlanReview(sessionId, o.turn_id, retrySeq!, signal),
+    [sessionId, o.turn_id, retrySeq],
+  );
+  const pendingReviews = questions.filter(
+    (q) => q.turn_id === o.turn_id && q.status === "pending",
+  );
+  const waiting = new Set(
+    pendingReviews.flatMap((q) =>
+      q.questions
+        .map((item) => item.intent?.callId)
+        .filter((id): id is string => !!id),
+    ),
+  );
+  const tools = metadata?.tools ?? [];
+  const messages = metadata?.messages ?? [];
+  const lastToolSeq = Math.max(-1, ...tools.map((tool) => tool.seq));
+  const finalMessage = [...messages]
+    .reverse()
+    .find((message) => message.seq > lastToolSeq && !!message.text);
+  const finalText = summary?.final_text || finalMessage?.text || "";
+  const processRows = [
+    ...tools.map((tool) => ({ seq: tool.seq, tool })),
+    ...messages.map((message) => ({ seq: message.seq, message })),
+  ].sort((a, b) => a.seq - b.seq);
+  return (
+    <section className="turn" data-turn-id={o.turn_id}>
+      <div className="user-message">
+        <span className="message-author">You</span>
+        <ImageGallery images={o.images ?? []} />
+        {o.content && <p>{o.content}</p>}
+        <div className="delivery">
+          {["queued", "starting"].includes(o.status) && (
+            <>
+              <LoaderCircle size={12} className="spin" />
+              {o.status === "queued" ? "Queued" : "Starting agent"}
+            </>
+          )}
+          {o.status === "failed" && (
+            <>
+              <AlertCircle size={13} />
+              <span>{o.error}</span>
+              <Button
+                size="sm"
+                variant="ghost"
+                onPress={() =>
+                  api(
+                    `/sessions/${sessionId}/messages/${o.id}/retry`,
+                    "POST",
+                  ).catch((e) => retryError(e.message))
+                }
+              >
+                Retry
+              </Button>
+            </>
+          )}
+        </div>
+      </div>
+      <div className="agent-message">
+        <div className="agent-label">
+          <span className="agent-avatar">
+            <Cloud size={18} />
+          </span>
+          <strong>Nimbus</strong>
+          <span>Cloud agent</span>
+        </div>
+        {(summary?.has_details || running || !!metadata) && (
+          <ExecutionProcess
+            count={summary?.tool_count ?? tools.length}
+            failures={
+              summary?.failed_count ??
+              tools.filter((tool) => tool.failed).length
+            }
+            outcome={o.outcome || (o.status === "failed" ? "error" : "")}
+            duration={summary?.duration}
+            waiting={pendingReviews.length > 0}
+            open={open}
+            onOpenChange={setOpen}
+          >
+            <TraceStatus {...detail} />
+            {processRows.map((row) =>
+              "tool" in row ? (
+                <ToolCall
+                  key={`tool-${row.tool.id}`}
+                  header={row.tool}
+                  settled={!running}
+                  waiting={waiting}
+                  sessionId={sessionId}
+                  turnId={o.turn_id}
+                />
+              ) : (
+                <div key={`message-${row.message.seq}`}>
+                  {row.message.has_reasoning && (
+                    <Reasoning
+                      sessionId={sessionId}
+                      turnId={o.turn_id}
+                      seq={row.message.seq}
+                      running={false}
+                      onOpenLibraryFile={onOpenLibraryFile}
                     />
-                  );
-                const content = e.payload.data.message?.content;
-                const reasoning = Array.isArray(content)
-                  ? content
-                      .filter((b) => b.type === "reasoning")
-                      .map((b) => b.text ?? b.reasoning)
-                      .join("")
-                  : "";
-                return (
-                  <div key={e.seq}>
-                    {reasoning && (
-                      <Fold
-                        className="reasoning-fold"
-                        title={
-                          <span className="reasoning-label">
-                            <BrainCircuit size={15} />
-                            Reasoning
-                          </span>
-                        }
-                      >
-                        <Rich onOpenLibraryFile={onOpenLibraryFile}>{reasoning}</Rich>
-                      </Fold>
-                    )}
-                    {e !== finalMessage && text(content) && (
-                      <Rich onOpenLibraryFile={onOpenLibraryFile}>{text(content)}</Rich>
-                    )}
-                  </div>
-                );
-              })}
-            {unresolved.map(
-              (st, j) =>
-                st.reasoning && (
-                  <Fold
-                    key={j}
-                    className="reasoning-fold"
-                    title={
-                      <span className="reasoning-label">
-                        <BrainCircuit size={15} />
-                        Reasoning
-                      </span>
-                    }
-                  >
-                    <Rich onOpenLibraryFile={onOpenLibraryFile}>{st.reasoning}</Rich>
-                  </Fold>
+                  )}
+                  {row.message !== finalMessage && row.message.text && (
+                    <Rich onOpenLibraryFile={onOpenLibraryFile}>
+                      {row.message.text}
+                    </Rich>
+                  )}
+                </div>
+              ),
+            )}
+            {metadata?.attempts.map(
+              (attempt) =>
+                attempt.has_reasoning && (
+                  <Reasoning
+                    key={attempt.id}
+                    sessionId={sessionId}
+                    turnId={o.turn_id}
+                    attemptId={attempt.id}
+                    running={running && attempt.ended_seq == null}
+                    onOpenLibraryFile={onOpenLibraryFile}
+                  />
                 ),
             )}
-          </>
-        );
-        return (
-          <section className="turn" key={o.id}>
-            <div className="user-message">
-              <span className="message-author">You</span>
-              <ImageGallery images={o.images ?? []} />
-              {o.content && <p>{o.content}</p>}
-              <div className="delivery">
-                {["queued", "starting"].includes(o.status) && (
-                  <>
-                    <LoaderCircle size={12} className="spin" />
-                    {o.status === "queued" ? "Queued" : "Starting agent"}
-                  </>
-                )}
-                {o.status === "failed" && (
-                  <>
-                    <AlertCircle size={13} />
-                    <span>{o.error}</span>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onPress={() =>
-                        api(
-                          `/sessions/${sessionId}/messages/${o.id}/retry`,
-                          "POST",
-                        ).catch((e) => retryError(e.message))
-                      }
-                    >
-                      Retry
-                    </Button>
-                  </>
-                )}
-              </div>
-            </div>
-            <div className="agent-message">
-              <div className="agent-label">
-                <span className="agent-avatar">
-                  <Cloud size={18} />
-                </span>
-                <strong>Nimbus</strong>
-                <span>Cloud agent</span>
-              </div>
-              {tools.length > 0 ? (
-                <ExecutionProcess
-                  tools={allTools}
-                  outcome={o.outcome}
-                  duration={duration}
-                  waiting={pendingReviews.length > 0}
-                >
-                  {processContent}
-                </ExecutionProcess>
-              ) : (
-                processContent
-              )}
-              {finalMessage && (
-                <Rich onOpenLibraryFile={onOpenLibraryFile}>{text(finalMessage.payload.data.message?.content)}</Rich>
-              )}
-              {unresolved.map(
-                (st, j) => st.text && <Rich key={j} onOpenLibraryFile={onOpenLibraryFile}>{st.text}</Rich>,
-              )}
-              {questions
-                .filter((q) => q.turn_id === o.turn_id)
-                .map((q) => (
-                  <PlanReview
-                  key={q.id}
+            {running &&
+              metadata?.pending_tools.map((call) => (
+                <PendingToolCall
+                  key={call.id}
                   sessionId={sessionId}
-                  review={q}
-                  onOpenLibraryFile={onOpenLibraryFile}
+                  turnId={o.turn_id}
+                  id={call.id}
+                  name={call.name}
+                  running={running}
                 />
-                ))}
-              {failedReview && o.outcome && i === outbox.length - 1 && (
-                <PlanReviewRetry
-                  sessionId={sessionId}
-                  seq={failedReview.seq}
-                  plan={failedReview.tool?.args.plan ?? ""}
-                />
-              )}
-              {!o.outcome &&
-                o.status !== "failed" &&
-                streaming.map((call) => (
-                  <PendingToolCall
-                    key={call.id}
-                    id={call.id}
-                    name={call.name}
-                    argumentsText={call.argumentsText}
-                  />
-                ))}
-              {!o.outcome && o.status !== "failed" && (
-                <div className="activity">
-                  <span className="pulse" />
-                  {questions.some(
-                    (q) => q.turn_id === o.turn_id && q.status === "pending",
-                  )
-                    ? "Waiting for your plan approval"
-                    : streaming.length > 0
-                      ? "Streaming tool arguments"
-                      : calls.length > results.length
-                        ? "Running tools"
-                        : "Thinking and responding"}
-                  <span>Output saved in real time</span>
-                </div>
-              )}
-              {o.outcome && (
-                <div className={"turn-outcome " + o.outcome}>
-                  {o.outcome === "completed" ? (
-                    <Check size={13} />
-                  ) : (
-                    <AlertCircle size={13} />
-                  )}
-                  {
-                    {
-                      completed: "Turn completed",
-                      interrupted: "Turn interrupted · Send a new message to continue",
-                      error: "Turn failed",
-                    }[o.outcome]
-                  }
-                  {o.error && o.status === "delivered" && (
-                    <span>{o.error}</span>
-                  )}
-                </div>
-              )}
-            </div>
-          </section>
-        );
-      })}
-    </>
+              ))}
+          </ExecutionProcess>
+        )}
+        {finalText && (
+          <Rich onOpenLibraryFile={onOpenLibraryFile}>{finalText}</Rich>
+        )}
+        {!summary?.final_text &&
+          metadata?.attempts.map(
+            (attempt) =>
+              attempt.text && (
+                <Rich key={attempt.id} onOpenLibraryFile={onOpenLibraryFile}>
+                  {attempt.text}
+                </Rich>
+              ),
+          )}
+        {questions
+          .filter((q) => q.turn_id === o.turn_id)
+          .map((q) => (
+            <PlanReview
+              key={q.id}
+              sessionId={sessionId}
+              review={q}
+              onOpenLibraryFile={onOpenLibraryFile}
+            />
+          ))}
+        {o.outcome && last && summary?.plan_review_retry && (
+          <PlanReviewRetry
+            sessionId={sessionId}
+            turnId={o.turn_id}
+            seq={summary.plan_review_retry.seq}
+            loadPlan={loadRetryPlan}
+          />
+        )}
+        {running && (
+          <div className="activity">
+            <span className="pulse" />
+            {pendingReviews.length
+              ? "Waiting for your plan approval"
+              : metadata?.pending_tools.length
+                ? "Streaming tool arguments"
+                : tools.some((tool) => !tool.complete)
+                  ? "Running tools"
+                  : "Thinking and responding"}
+            <span>Output saved in real time</span>
+          </div>
+        )}
+        {o.outcome && (
+          <div className={"turn-outcome " + o.outcome}>
+            {o.outcome === "completed" ? (
+              <Check size={13} />
+            ) : (
+              <AlertCircle size={13} />
+            )}
+            {
+              {
+                completed: "Turn completed",
+                interrupted:
+                  "Turn interrupted · Send a new message to continue",
+                error: "Turn failed",
+              }[o.outcome]
+            }
+            {o.error && o.status === "delivered" && <span>{o.error}</span>}
+          </div>
+        )}
+      </div>
+    </section>
   );
 }

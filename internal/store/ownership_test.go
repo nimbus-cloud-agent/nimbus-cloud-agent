@@ -64,7 +64,7 @@ func TestOwnershipHandoffWaitsForDrain(t *testing.T) {
 	}
 	defer successor.Close()
 	var count int64
-	if err := successor.db.Table("schema_migrations").Count(&count).Error; err != nil || count != 11 {
+	if err := successor.db.Table("schema_migrations").Count(&count).Error; err != nil || count != 12 {
 		t.Fatalf("migrations applied incorrectly: %d, %v", count, err)
 	}
 	if _, err := TryOpenWithHandoff(ctx, dsn); !errors.Is(err, ErrDatabaseOwned) {

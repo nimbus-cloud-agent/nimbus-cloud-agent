@@ -56,6 +56,14 @@ PNG, JPEG, WebP, and GIF are supported. Limits are 5 MiB per upload, 4 images pe
 
 PostgreSQL owns the normalized bytes and attachment reference. Later turns reconstruct the supervisor's private attachment cache from these bytes, so deleting a completed local cache or restarting Nimbus does not lose images. Removing an image preview detaches it from the draft; session deletion removes all uploaded copies.
 
+## Settings and skill content
+
+The frontend reads `/settings`, `/skills`, or `/mcp/servers` only while the corresponding Settings tab is visible. It does not prefetch the other tabs.
+
+`GET /skills?include_content=false` returns skill metadata and file paths, without file contents. Omitting the flag retains the full-content query. `GET /skills/:id/files?path=<encoded path>` reads one exact file and returns `{path,content}`; a missing skill/file returns `404`. The editor requests only the selected file and cancels obsolete requests.
+
+`PATCH /skills/:id` accepts optional `name`, `description`, `enabled`, and `files`. When supplied, `files` is a complete path manifest: `{path,content?}` entries retain existing bytes if `content` is omitted, replace bytes if supplied (including `""`), and require content for new paths. Paths omitted from the manifest are removed. Omitting `files` preserves all files. Updates validate and commit atomically, so toggling a skill or saving one edited file neither fetches nor overwrites unopened file contents. `POST` / `PUT` retain their full replacement semantics.
+
 ## Library
 
 The Library is a global (not per-session) object store in PostgreSQL. Files live in `library_files`, each write creates a new row in `file_versions` (version numbers start at 1), and version bytes are split into 1 MiB `file_chunks` rows. A file is addressed by its UUID or by its flat, unique name; a write with an existing name creates a new version of that file. The link returned for a file is `nimbus://library/<uuid>` and resolves to the current version. Caps are 1 MiB chunks, 100 MB per file, 1 MiB per text read, and 5 MiB per image read.
@@ -63,8 +71,11 @@ The Library is a global (not per-session) object store in PostgreSQL. Files live
 | Method and path | Behavior |
 | --- | --- |
 | `GET /library` | List all files as `{files:[{id,name,mime_type,size_bytes,version,updated_at}]}`, most recently updated first |
-| `GET /library/:id` | Read one file as `{id,name,mime_type,size_bytes,version,created_at,updated_at,versions:[{version,size_bytes,sha256,created_at}]}` |
+| `GET /library/:id[?include_versions=false]` | File metadata/current version; `versions: []`, without querying history |
+| `GET /library/:id?include_versions=true` | Explicit version history as `versions:[{version,size_bytes,sha256,created_at}]` |
 | `GET /library/:id/content?version=N` | Stream one version's raw bytes; `version` defaults to the current version |
+
+The browser queries the Library list only while that panel is visible, resolves bare-link names by file ID, and requests version history only when the version selector opens. Preview content is limited to the selected file/version; closing or switching aborts obsolete requests.
 
 The content endpoint sets `Content-Type` to the stored MIME type, `Content-Disposition: inline`, and `X-Content-Type-Options: nosniff`. Stored HTML additionally gets `Content-Security-Policy: sandbox allow-scripts`: scripts can render interactive pages, but the sandbox does not grant same-origin access to the app's DOM, cookies, or storage. An invalid id, a missing file, or a missing version returns `404`. There is no delete or upload endpoint; the agent tools below are the only writers.
 
@@ -119,23 +130,77 @@ To revise, select `Keep planning` and optionally include `custom` with feedback.
 
 An invalid or incomplete answer returns `400`, a question belonging to another session returns `404`, and a conflicting decision or interrupted review returns `409`. Repeating the same accepted answer returns `200`. Browser disconnects do not resolve questions. Stop or backend restart interrupts pending reviews; sending a new message can request resubmission. Native history is not rewritten.
 
+## Conversation history and execution details
+
+`GET /sessions/:id/events` returns only the latest **10 turns**, oldest first within the page. `limit` accepts 1–50 turns. To load older turns, send `before_turn=<turn UUID>` from the preceding response; it is an exclusive session-scoped keyset cursor ordered by `(created_at, id)`.
+
+```json
+{
+  "outbox": [],
+  "turns": [],
+  "questions": [],
+  "has_more": false,
+  "before_turn": null
+}
+```
+
+`outbox`, `turns`, and `questions` cover only this page. Each turn summary contains `turn_id`, `final_text`, `has_details`, `tool_count`, `failed_count`, and optional `duration` in seconds. `final_text` is the final assistant reply after the last tool call; raw reasoning, tool arguments, results, and token frames are not returned. Historical missing-channel plan failures can include `plan_review_retry: {"seq": 123}`; the plan body is fetched by exact native sequence only when the user resubmits. History pagination uses turn cursors, not native `after_seq` / `types`.
+
+`GET /sessions/:id/turns/:turn/events` explicitly loads one turn's execution trace:
+
+```json
+{
+  "events": [],
+  "frames": [],
+  "questions": [],
+  "cursor": {"seq": -1, "frame": 0}
+}
+```
+
+Native events and frames preserve their original payloads. The read snapshot and its cursors are consistent; use those cursors for the turn-detail stream below. Turns are validated within their owning session. Undelivered turns have no native events.
+
+The trace endpoints also accept explicit data-query conditions:
+
+| Query | Selection |
+| --- | --- |
+| `projection=metadata` | Typed tool/message/attempt metadata, without tool bodies, reasoning, or raw frame replay |
+| `projection=headers&kind=events` or `kind=frames` | Payload-free trace identities/types, newest 100 by default (max 500); exclusive `before` cursor and `limit` for older pages |
+| `parent_call_id=root` or a call ID | Root tools or direct children of the given call |
+| `argument_keys=description,path,command,query,name&max_field_chars=256` | Requested bounded scalar argument fields for labels; the client chooses label precedence |
+| `call_id=<call ID>` | Exact native tool call/result/PTC records and matching call output/argument frames |
+| `seq=<native sequence>` | One native record, no frames |
+| `frame_id=<frame ID>` | One exact frame, no native records; still restricted to the selected turn |
+| `attempt_id=<attempt ID>` | Matching assistant frames, no unrelated native records |
+| `chunk_types=reasoning-delta` | Comma-separated frame chunk types |
+| `frame_types=tool-output` | Comma-separated frame categories, while retaining matching native records; assembled tool cards omit historical argument deltas |
+| `include_questions=false&include_outbox=false` | Omit unused review/outbox envelopes and their data queries; normal nested detail readers use this |
+
+The metadata projection returns `tools`, `messages`, `pending_tools`, `attempts`, `questions`, `outbox`, and `cursor`. Tool headers include IDs, parentage, status, times, child count, and requested scalar `args` only. Messages include visible text and a `has_reasoning` flag. Unresolved attempts contain compact visible text and reasoning-presence metadata; pending tools contain only IDs/names. Full native records are never replaced with truncated or fabricated native payloads.
+
+Header pages return `{events,frames,has_more,before,cursor}`. Opening a trajectory turn reads event headers only; frame headers have a separate disclosure, and each individual payload is fetched only on expansion by `seq` or `frame_id`. Older header pages require an explicit user action. Header SSE (`projection=headers&kind=...`) emits `event_header` / `frame_header` with composite cursors, draining forward batches without skipping unseen headers. It never replays the stored payloads.
+
+`include_question_content=false` on history or trace queries returns review status, answers, timestamps, and question IDs/intents without hidden document content. The browser uses this projection and fetches `GET /sessions/:id/questions/:question` only when that review document is opened. This query is session-scoped. Pending/completed default expansion is frontend policy, not a backend status-dependent projection.
+
+The browser fetches one tail page on entry and another only when the user scrolls upward near the top, preserving the reading position. Opening execution details loads metadata; opening a tool loads that call's inputs/results and its direct child headers; opening reasoning loads its native record or filtered attempt frames. Closing a parent stops/unmounts nested requests and streams. Cached details catch up on reopening, including a turn that completed while closed. Final replies remain visible without any detail request. Trajectory loads raw traces only through explicit inspection. Hidden Library/mobile chat panels do not continue conversation-detail queries, and mobile-hidden Terminal does not create a WebSocket.
+
 ## EventSource streams
 
 `GET /sessions/stream` immediately emits `event: sessions` with a full list snapshot. It emits another snapshot only when the list or a session's state changes. Every reconnect receives the current full snapshot; no cursor is required.
 
-`GET /sessions/:id/stream?after_seq=-1` emits:
+`GET /sessions/:id/stream?since_turn=<turn UUID>` emits lightweight selected-session updates. `since_turn` is the oldest turn from the initial page, inclusive; newer turns remain in scope. Without it the stream covers the latest 10 turns. The browser merges upserts into its loaded history, retaining older pages.
 
 | Event | Data |
 | --- | --- |
-| `session` | Native persisted event; SSE `id` is the native sequence number |
 | `state` | Current session view, including `mode_locked` and sandbox state |
-| `outbox` | Current message queue/delivery snapshot and image references |
-| `frame` | Persisted incremental assistant/tool output with its own durable ID |
-| `questions` | Full durable plan-review snapshot, initially and on changes |
+| `outbox` | In-scope message queue/delivery snapshot and image references |
+| `turns` | In-scope final-reply and execution summaries |
+| `questions` | In-scope durable plan-review snapshot |
 
-On reconnect, `Last-Event-ID` takes precedence over `after_seq`. Native events replay after that sequence. Frames replay separately and are deduplicated by ID in the browser. `GET /sessions/:id/events?after_seq=-1` supplies initial paginated history, outbox, frames, questions, and `has_more`; the UI then opens the session stream.
+This stream never returns native events or frames. Frame-only notifications do not recompute turn summaries.
 
-Both streams send the comment `: heartbeat` every **5 seconds**, independently of content delivery. Heartbeats have no event ID and are not messages. The server uses one shared PostgreSQL LISTEN connection and fans changes out by session; there is no periodic SSE data query. Notification bursts are coalesced for 25 ms. Listener reconnects trigger cursor-based catch-up, while each browser reconnect receives a current snapshot. Heartbeat ticks do not query the database. Image bytes are fetched through their image URLs, never included as base64 in stream snapshots.
+`GET /sessions/:id/turns/:turn/stream?after_seq=<seq>&after_frame=<frame>` accepts the same projection and filters as the HTTP trace query. Full projection emits `session`, `frame`, `questions`, and the one-turn `outbox`; metadata projection emits typed `metadata` snapshots. Both native `session` and `frame` events carry composite SSE IDs `<seq>:<frame>`; `Last-Event-ID` takes precedence over query cursors on reconnect. Records replay strictly after their respective cursors and are scoped to this turn and the explicit filters. The browser streams only currently displayed running detail resources; closing a disclosure stops its lane.
+
+All streams send the comment `: heartbeat` every **5 seconds**, independently of content delivery. Heartbeats have no event ID and are not messages. The server uses one shared PostgreSQL LISTEN connection and fans changes out by session; there is no periodic SSE data query. Notification bursts are coalesced for 25 ms. Subscriptions register before reading snapshots so concurrent writes are not lost. Listener reconnects trigger catch-up, while each browser reconnect receives current lightweight snapshots or cursor-based trace replay. Heartbeat ticks do not query the database. Image bytes are fetched through their image URLs, never included as base64 in stream snapshots.
 
 ## Web terminal
 

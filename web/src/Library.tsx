@@ -16,7 +16,8 @@ export default function Library({
 
   useEffect(() => {
     let active = true;
-    listLibrary()
+    const controller = new AbortController();
+    listLibrary(controller.signal)
       .then((list) => {
         if (!active) return;
         setFiles(
@@ -35,6 +36,7 @@ export default function Library({
       });
     return () => {
       active = false;
+      controller.abort();
     };
     // onError is App's stable setError; reload only on mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -51,7 +53,9 @@ export default function Library({
           </p>
         </div>
         <span className="muted">
-          {loading ? "" : `${files.length} file${files.length === 1 ? "" : "s"}`}
+          {loading
+            ? ""
+            : `${files.length} file${files.length === 1 ? "" : "s"}`}
         </span>
       </div>
       {loading ? (

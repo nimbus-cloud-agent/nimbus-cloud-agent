@@ -1,24 +1,70 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@heroui/react";
 import { Check, FileText, MessageSquare, Pause } from "lucide-react";
 import { api, type UserQuestion } from "./api";
 import Rich from "./Rich";
 
-export default function PlanReview({
-  sessionId,
-  review,
-  onOpenLibraryFile,
-}: {
+type Props = {
   sessionId: string;
   review: UserQuestion;
   onOpenLibraryFile?: (id: string) => void;
-}) {
+};
+
+export default function PlanReview(props: Props) {
+  return <Review key={`${props.sessionId}:${props.review.id}`} {...props} />;
+}
+
+function Review({ sessionId, review, onOpenLibraryFile }: Props) {
   const [feedback, setFeedback] = useState("");
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState("");
   const pending = review.status === "pending";
+  const [open, setOpen] = useState(pending);
+  const [document, setDocument] = useState<UserQuestion>();
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState("");
+  const [revision, setRevision] = useState(0);
+  const request = useRef<AbortController | null>(null);
+  useEffect(() => {
+    setOpen(pending);
+  }, [pending]);
+  useEffect(() => {
+    if (!open || document) return;
+    const controller = new AbortController();
+    request.current = controller;
+    setLoading(true);
+    setLoadError("");
+    api<UserQuestion>(
+      `/sessions/${sessionId}/questions/${review.id}`,
+      "GET",
+      undefined,
+      controller.signal,
+    )
+      .then((data) => {
+        if (!controller.signal.aborted) setDocument(data);
+      })
+      .catch((e) => {
+        if (!controller.signal.aborted) setLoadError(String(e));
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+    return () => {
+      controller.abort();
+      if (request.current === controller) request.current = null;
+    };
+  }, [sessionId, review.id, open, document, revision]);
+  const ready =
+    !!document?.questions.length &&
+    document.questions.length === review.questions.length &&
+    document.questions.every(
+      (q) =>
+        review.questions.some((metadata) => metadata.id === q.id) &&
+        (q.detail !== undefined || q.question !== undefined) &&
+        q.options?.some((option) => option.label === q.intent?.approve),
+    );
   const approved =
     review.status === "answered" &&
     review.questions.every((q) => {
@@ -30,6 +76,7 @@ export default function PlanReview({
       );
     });
   async function answer(action: "approve" | "revise" | "dismiss") {
+    if (!ready || !document || busy || sent) return;
     setBusy(true);
     setError("");
     try {
@@ -39,7 +86,7 @@ export default function PlanReview({
         action === "dismiss"
           ? { dismissed: true }
           : {
-              answers: review.questions.map((q) => ({
+              answers: document.questions.map((q) => ({
                 id: q.id,
                 selected: [
                   action === "approve" ? q.intent!.approve : "Keep planning",
@@ -75,13 +122,50 @@ export default function PlanReview({
         <FileText size={18} />
         <strong>{status}</strong>
       </header>
-      <details open={pending} className="plan-review-detail">
-        <summary>Plan</summary>
-        <div className="plan-review-document">
-          {review.questions.map((q) => (
-            <Rich key={q.id} onOpenLibraryFile={onOpenLibraryFile}>{q.detail ?? q.question}</Rich>
-          ))}
-        </div>
+      <details
+        open={open}
+        className="plan-review-detail"
+        onToggle={(event) => {
+          const next = event.currentTarget.open;
+          if (!next) request.current?.abort();
+          setOpen(next);
+        }}
+      >
+        <summary
+          onClick={(event) => {
+            event.preventDefault();
+            if (open) request.current?.abort();
+            setOpen(!open);
+          }}
+        >
+          Plan
+        </summary>
+        {open && (
+          <div className="plan-review-document">
+            {document ? (
+              document.questions.map((q) => (
+                <Rich key={q.id} onOpenLibraryFile={onOpenLibraryFile}>
+                  {q.detail ?? q.question ?? ""}
+                </Rich>
+              ))
+            ) : loadError ? (
+              <div role="alert">
+                <p>{loadError}</p>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onPress={() => setRevision((value) => value + 1)}
+                >
+                  Retry plan document
+                </Button>
+              </div>
+            ) : (
+              <p role="status">
+                {loading ? "Loading plan…" : "Plan document is not loaded."}
+              </p>
+            )}
+          </div>
+        )}
       </details>
       {review.answer?.answers?.map(
         (a) =>
@@ -93,7 +177,9 @@ export default function PlanReview({
       )}
       {pending && (
         <div className="plan-review-controls">
-          <p>Approving exits Plan mode and lets the agent continue with the plan.</p>
+          <p>
+            Approving exits Plan mode and lets the agent continue with the plan.
+          </p>
           {editing && (
             <label className="plan-review-edit">
               Feedback (optional)
@@ -111,7 +197,7 @@ export default function PlanReview({
             {!editing && (
               <Button
                 size="sm"
-                isDisabled={busy || sent}
+                isDisabled={busy || sent || !ready}
                 onPress={() => answer("approve")}
               >
                 <Check size={15} />
@@ -121,7 +207,7 @@ export default function PlanReview({
             <Button
               size="sm"
               variant="secondary"
-              isDisabled={busy || sent}
+              isDisabled={busy || sent || !ready}
               onPress={() => (editing ? answer("revise") : setEditing(true))}
             >
               <MessageSquare size={15} />
@@ -140,7 +226,7 @@ export default function PlanReview({
             <Button
               size="sm"
               variant="ghost"
-              isDisabled={busy || sent}
+              isDisabled={busy || sent || !ready}
               onPress={() => answer("dismiss")}
             >
               <Pause size={14} />

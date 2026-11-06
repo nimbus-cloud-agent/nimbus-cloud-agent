@@ -16,7 +16,18 @@ import {
   Workflow,
 } from "lucide-react";
 import { Fold } from "./components";
-import { toolFailed, type ToolNode } from "./tool-events";
+import {
+  buildToolTree,
+  streamingToolCalls,
+  type ToolNode,
+} from "./tool-events";
+import type { ToolHeader } from "./api";
+import {
+  useTurnTrace,
+  useTurnMetadata,
+  useTurnDisclosure,
+  TraceStatus,
+} from "./TurnTrace";
 
 function toolInfo(node: Pick<ToolNode, "name" | "args">) {
   const labels: Record<string, [string, typeof Cloud]> = {
@@ -47,7 +58,9 @@ function toolInfo(node: Pick<ToolNode, "name" | "args">) {
 
 /** Argument deltas are text, so this counts characters rather than bytes. */
 function sizeLabel(chars: number) {
-  return chars < 1000 ? `${chars} chars` : `${(chars / 1000).toFixed(1)}k chars`;
+  return chars < 1000
+    ? `${chars} chars`
+    : `${(chars / 1000).toFixed(1)}k chars`;
 }
 
 /**
@@ -56,18 +69,38 @@ function sizeLabel(chars: number) {
  * the meantime and is replaced by ToolCall when the call starts executing.
  */
 export function PendingToolCall({
+  sessionId,
+  turnId,
   id,
   name,
-  argumentsText,
+  running,
 }: {
+  sessionId: string;
+  turnId: string;
   id: string;
   name: string;
-  argumentsText: string;
+  running: boolean;
 }) {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useTurnDisclosure(`tool:${turnId}:${id}`, true);
+  const detail = useTurnTrace(
+    sessionId,
+    turnId,
+    open,
+    running,
+    `call_id=${encodeURIComponent(id)}&chunk_types=tool-call-delta`,
+  );
+  const argumentsText =
+    streamingToolCalls(detail.trace?.frames ?? [], new Set()).find(
+      (call) => call.id === id,
+    )?.argumentsText ?? "";
   const { label, Icon } = toolInfo({ name, args: { formatted: "{}" } });
   return (
-    <div className="tool-call" data-tool-id={id} data-streaming="true" data-state="running">
+    <div
+      className="tool-call"
+      data-tool-id={id}
+      data-streaming="true"
+      data-state="running"
+    >
       <Fold
         className="tool-disclosure"
         label={`${label}: receiving arguments`}
@@ -87,7 +120,11 @@ export function PendingToolCall({
       >
         {() => (
           <div className="tool-detail">
-            <CodeSection label="Arguments (streaming JSON)" value={argumentsText} />
+            <TraceStatus {...detail} />
+            <CodeSection
+              label="Arguments (streaming JSON)"
+              value={argumentsText}
+            />
           </div>
         )}
       </Fold>
@@ -152,11 +189,13 @@ function Output({ node }: { node: ToolNode }) {
     return (
       <>
         {value.stdout && <CodeSection label="Output" value={value.stdout} />}
-          {value.stderr && (
+        {value.stderr && (
           <CodeSection label="Standard error" value={value.stderr} error />
         )}
         <div className="tool-result-meta">
-          {value.exitCode !== undefined && <span>Exit code {value.exitCode}</span>}
+          {value.exitCode !== undefined && (
+            <span>Exit code {value.exitCode}</span>
+          )}
           {value.truncated && <span>Output truncated</span>}
         </div>
       </>
@@ -176,23 +215,48 @@ function Output({ node }: { node: ToolNode }) {
 }
 
 export function ToolCall({
-  node,
+  header,
   settled,
   waiting,
+  sessionId,
+  turnId,
 }: {
-  node: ToolNode;
+  header: ToolHeader;
   settled: boolean;
   waiting: Set<string>;
+  sessionId: string;
+  turnId: string;
 }) {
-  const { label, Icon, detail } = toolInfo(node);
-  const failed = toolFailed(node);
-  const pending =
-    waiting.has(node.id) || node.children.some((c) => waiting.has(c.id));
-  const state = failed
+  const [open, setOpen] = useTurnDisclosure(`tool:${turnId}:${header.id}`);
+  const running = !settled && !header.complete;
+  const detail = useTurnTrace(
+    sessionId,
+    turnId,
+    open,
+    running,
+    `call_id=${encodeURIComponent(header.id)}&frame_types=tool-output`,
+  );
+  const children = useTurnMetadata(
+    sessionId,
+    turnId,
+    open && header.child_count > 0,
+    running,
+    header.id,
+  );
+  const node = buildToolTree(
+    detail.trace?.events ?? [],
+    detail.trace?.frames ?? [],
+  ).find((tool) => tool.id === header.id);
+  const {
+    label,
+    Icon,
+    detail: summary,
+  } = toolInfo({ name: header.name, args: { ...header.args, formatted: "" } });
+  const state = header.failed
     ? "error"
-    : node.result !== undefined
+    : header.complete
       ? "done"
-      : pending
+      : waiting.has(header.id)
         ? "waiting"
         : settled
           ? "stopped"
@@ -205,23 +269,23 @@ export function ToolCall({
     running: "Running",
   }[state];
   const duration =
-    node.time != null && node.ended != null
-      ? Math.max(0, node.ended - node.time) / 1000
+    header.time != null && header.ended != null
+      ? Math.max(0, header.ended - header.time) / 1000
       : null;
   return (
-    <div className="tool-call" data-tool-id={node.id} data-state={state}>
+    <div className="tool-call" data-tool-id={header.id} data-state={state}>
       <Fold
         className="tool-disclosure"
-        label={`${label}：${detail || node.name}，${status}`}
+        open={open}
+        onOpenChange={setOpen}
+        label={`${label}：${summary || header.name}，${status}`}
         title={
           <span className="tool-row">
             <Icon size={15} className="tool-row-icon" />
             <span className="tool-row-label">{label}</span>
-            <span className="tool-row-summary" title={detail}>
-              {detail ||
-                (node.children.length
-                  ? `${node.children.length} child calls`
-                  : "")}
+            <span className="tool-row-summary" title={summary}>
+              {summary ||
+                (header.child_count ? `${header.child_count} child calls` : "")}
             </span>
             <span className="tool-row-state" title={status}>
               {state === "running" ? (
@@ -246,36 +310,46 @@ export function ToolCall({
       >
         {() => (
           <div className="tool-detail">
-            {node.name === "run_code" && node.args.code ? (
-              <CodeSection label="TypeScript" value={node.args.code} />
-            ) : node.name === "sandbox_exec" && node.args.command ? (
-              <>
-                <CodeSection label="Command" value={node.args.command} />
-                {node.args.cwd && (
-                  <p className="tool-result-meta">Directory: {node.args.cwd}</p>
-                )}
-              </>
-            ) : node.name === "sandbox_write_file" ? (
-              <CodeSection label="Written content" value={node.args.content ?? ""} />
-            ) : node.name === "sandbox_read_file" ? null : (
-              <CodeSection label="Arguments" value={node.args.formatted} />
-            )}
-            {node.children.length > 0 && (
+            <TraceStatus {...detail} />
+            {node &&
+              (node.name === "run_code" && node.args.code ? (
+                <CodeSection label="TypeScript" value={node.args.code} />
+              ) : node.name === "sandbox_exec" && node.args.command ? (
+                <>
+                  <CodeSection label="Command" value={node.args.command} />
+                  {node.args.cwd && (
+                    <p className="tool-result-meta">
+                      Directory: {node.args.cwd}
+                    </p>
+                  )}
+                </>
+              ) : node.name === "sandbox_write_file" ? (
+                <CodeSection
+                  label="Written content"
+                  value={node.args.content ?? ""}
+                />
+              ) : node.name === "sandbox_read_file" ? null : (
+                <CodeSection label="Arguments" value={node.args.formatted} />
+              ))}
+            {header.child_count > 0 && (
               <div className="tool-children" aria-label="Child tool calls">
                 <div className="tool-children-label">
-                  Child calls <span>{node.children.length}</span>
+                  Child calls <span>{header.child_count}</span>
                 </div>
-                {node.children.map((child) => (
+                <TraceStatus {...children} />
+                {children.metadata?.tools.map((child) => (
                   <ToolCall
                     key={child.id}
-                    node={child}
-                    settled={settled || node.result !== undefined}
+                    header={child}
+                    settled={settled}
                     waiting={waiting}
+                    sessionId={sessionId}
+                    turnId={turnId}
                   />
                 ))}
               </div>
             )}
-            <Output node={node} />
+            {node && <Output node={node} />}
             {state === "stopped" && (
               <p className="tool-empty-result">
                 Execution interrupted before a tool result was received.
@@ -289,21 +363,24 @@ export function ToolCall({
 }
 
 export function ExecutionProcess({
-  tools,
+  count,
+  failures,
+  open,
+  onOpenChange,
   outcome,
   duration,
   waiting,
   children,
 }: {
-  tools: ToolNode[];
+  count: number;
+  failures: number;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
   outcome: string;
   duration?: number;
   waiting: boolean;
   children: ReactNode;
 }) {
-  const [manualOpen, setManualOpen] = useState<boolean>();
-  const open = manualOpen ?? !outcome;
-  const failures = tools.filter(toolFailed).length;
   const seconds = Math.round(duration ?? 0);
   const title = waiting
     ? "Waiting for plan approval"
@@ -315,9 +392,9 @@ export function ExecutionProcess({
   return (
     <Fold
       className="execution-process"
-      label={`${title}, ${tools.length} calls${failures ? `, ${failures} failed` : ""}`}
+      label={`${title}, ${count} calls${failures ? `, ${failures} failed` : ""}`}
       open={open}
-      onOpenChange={setManualOpen}
+      onOpenChange={onOpenChange}
       title={
         <span className="process-summary">
           {!outcome && !waiting ? (
@@ -326,7 +403,7 @@ export function ExecutionProcess({
             <Workflow size={15} />
           )}
           <span>{title}</span>
-          <span className="process-count">{tools.length} calls</span>
+          <span className="process-count">{count} calls</span>
           {failures > 0 && (
             <span className="process-errors">{failures} failed</span>
           )}

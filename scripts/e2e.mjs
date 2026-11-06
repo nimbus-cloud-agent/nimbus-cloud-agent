@@ -23,19 +23,20 @@ async function turn(s, message, opts = {}) {
     const d = await api(`/sessions/${s.id}/events`);
     const row = d.outbox.find((x) => x.id === o.id);
     if (row?.outcome) {
+      const trace = await api(`/sessions/${s.id}/turns/${o.turn_id}/events`);
       console.log(
         "turn",
         row.outcome,
         row.error || "",
-        d.events.length,
+        trace.events.length,
         "events",
-        d.frames.length,
+        trace.frames.length,
         "frames",
       );
       if (row.outcome !== "completed") {
         console.log(
           JSON.stringify(
-            d.events.filter((x) =>
+            trace.events.filter((x) =>
               ["turn/end", "tool/result"].includes(x.type),
             ),
             null,
@@ -44,14 +45,18 @@ async function turn(s, message, opts = {}) {
         );
         throw Error(row.error || row.outcome);
       }
-      return d;
+      return { ...d, ...trace };
     }
     await pause(700);
   }
   throw Error("turn timed out");
 }
 const s = await api("/sessions", {});
-await api(`/sessions/${s.id}`, { title: "E2E verification · E2B workspace" }, "PATCH");
+await api(
+  `/sessions/${s.id}`,
+  { title: "E2E verification · E2B workspace" },
+  "PATCH",
+);
 await writeFile(".local/e2e-session.json", JSON.stringify(s));
 assert.equal(s.sandbox.state, "not_started");
 await turn(s, 'Reply only with "Connected". Do not use tools.');
@@ -107,7 +112,10 @@ console.log(
 console.log("PASS Agent and PTY share files");
 await api(`/sessions/${s.id}/sandbox/pause`, {});
 assert.equal((await api(`/sessions/${s.id}`)).sandbox.state, "paused");
-assert.ok((await api(`/sessions/${s.id}/events`)).events.length);
+assert.ok(
+  (await api(`/sessions/${s.id}/turns/${d.outbox.at(-1).turn_id}/events`))
+    .events.length,
+);
 assert.equal((await api(`/sessions/${s.id}`)).sandbox.state, "paused");
 console.log("PASS paused history does not resume sandbox");
 await api(`/sessions/${s.id}/sandbox/start`, {});

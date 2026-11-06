@@ -29,7 +29,16 @@ func (s *Server) libraryRoutes(r *gin.Engine) {
 		c.JSON(200, gin.H{"files": files})
 	})
 	r.GET("/api/library/:id", func(c *gin.Context) {
-		detail, err := s.libraryDetail(c.Request.Context(), c.Param("id"))
+		includeVersions := false
+		if raw, ok := c.GetQuery("include_versions"); ok {
+			var err error
+			includeVersions, err = strconv.ParseBool(raw)
+			if err != nil {
+				c.JSON(400, gin.H{"error": "include_versions must be a boolean"})
+				return
+			}
+		}
+		detail, err := s.libraryDetail(c.Request.Context(), c.Param("id"), includeVersions)
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
 				c.Status(404)
@@ -102,7 +111,7 @@ type libraryDetailView struct {
 	Versions  []model.LibraryVersionSummary `json:"versions"`
 }
 
-func (s *Server) libraryDetail(ctx context.Context, id string) (libraryDetailView, error) {
+func (s *Server) libraryDetail(ctx context.Context, id string, includeVersions bool) (libraryDetailView, error) {
 	if _, err := uuid.Parse(id); err != nil {
 		return libraryDetailView{}, store.ErrNotFound
 	}
@@ -110,11 +119,13 @@ func (s *Server) libraryDetail(ctx context.Context, id string) (libraryDetailVie
 	if err != nil {
 		return libraryDetailView{}, err
 	}
-	versions, err := s.libraryVersionSummaries(ctx, file.ID)
-	if err != nil {
-		return libraryDetailView{}, err
+	detail := libraryDetailView{ID: file.ID, Name: file.Name, MimeType: file.MimeType, SizeBytes: file.SizeBytes, CreatedAt: file.CreatedAt, UpdatedAt: file.UpdatedAt, Versions: []model.LibraryVersionSummary{}}
+	if includeVersions {
+		detail.Versions, err = s.libraryVersionSummaries(ctx, file.ID)
+		if err != nil {
+			return libraryDetailView{}, err
+		}
 	}
-	detail := libraryDetailView{ID: file.ID, Name: file.Name, MimeType: file.MimeType, SizeBytes: file.SizeBytes, CreatedAt: file.CreatedAt, UpdatedAt: file.UpdatedAt, Versions: versions}
 	if file.CurrentVersionID != nil {
 		if current, err := s.S.FileVersionByID(ctx, *file.CurrentVersionID); err == nil {
 			detail.Version = int64(current.VersionNumber)

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -124,42 +123,10 @@ func (s *Server) routes(r *gin.Engine) {
 		}
 		c.JSON(202, gin.H{"status": "queued"})
 	})
-	r.GET("/api/sessions/:id/events", func(c *gin.Context) {
-		x, ok := s.session(c)
-		if !ok {
-			return
-		}
-		after := int64(-1)
-		if v, e := strconv.ParseInt(c.Query("after_seq"), 10, 64); e == nil {
-			after = v
-		}
-		filter := store.EventFilter{SessionID: x.ID, After: after, Limit: 1000}
-		if types := c.Query("types"); types != "" {
-			filter.Types = strings.Split(types, ",")
-		}
-		events, err := s.events(c.Request.Context(), filter)
-		if err != nil {
-			s.fail(c, 500, err)
-			return
-		}
-		outbox, err := s.outboxes(c.Request.Context(), store.OutboxFilter{SessionID: x.ID})
-		if err != nil {
-			s.fail(c, 500, err)
-			return
-		}
-		frames, err := s.frames(c.Request.Context(), store.FrameFilter{SessionID: x.ID})
-		if err != nil {
-			s.fail(c, 500, err)
-			return
-		}
-		questions, err := s.questions(c.Request.Context(), x.ID)
-		if err != nil {
-			s.fail(c, 500, err)
-			return
-		}
-		c.JSON(200, model.History{Events: events, Outbox: outbox, Frames: frames, Questions: questions, HasMore: len(events) == 1000})
-	})
+	r.GET("/api/sessions/:id/events", s.history)
+	r.GET("/api/sessions/:id/turns/:turn/events", s.turnHistory)
 	r.GET("/api/sessions/:id/stream", s.stream)
+	r.GET("/api/sessions/:id/turns/:turn/stream", s.turnStream)
 	r.POST("/api/sessions/:id/stop", func(c *gin.Context) {
 		x, ok := s.session(c)
 		if !ok {
@@ -195,7 +162,7 @@ func (s *Server) routes(r *gin.Engine) {
 		}
 		l := s.lock(x.ID)
 		if !l.TryLock() {
-				s.fail(c, 409, fmt.Errorf("The sandbox is busy. Try pausing it again later."))
+			s.fail(c, 409, fmt.Errorf("The sandbox is busy. Try pausing it again later."))
 			return
 		}
 		defer l.Unlock()
@@ -206,7 +173,7 @@ func (s *Server) routes(r *gin.Engine) {
 			return
 		}
 		if x.AgentState != "idle" {
-				s.fail(c, 409, fmt.Errorf("Stop the current turn before pausing the sandbox."))
+			s.fail(c, 409, fmt.Errorf("Stop the current turn before pausing the sandbox."))
 			return
 		}
 		if e := s.pause(c.Request.Context(), x.ID); e != nil {
@@ -227,7 +194,7 @@ func (s *Server) message(c *gin.Context) {
 		return
 	}
 	if _, deleting := s.deleting.Load(x.ID); deleting {
-			s.fail(c, 409, fmt.Errorf("Chat is being deleted."))
+		s.fail(c, 409, fmt.Errorf("Chat is being deleted."))
 		return
 	}
 	var in struct {

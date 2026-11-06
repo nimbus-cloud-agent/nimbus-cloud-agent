@@ -58,6 +58,13 @@ func migrationDB(t *testing.T, through string) (*gorm.DB, func(string)) {
 		raw, _ = admin.DB()
 		raw.Close()
 	})
+	var actualSchema string
+	if err := db.Raw("SELECT current_schema()").Scan(&actualSchema).Error; err != nil {
+		t.Fatal(err)
+	}
+	if actualSchema != schema {
+		t.Fatalf("test schema isolation failed: expected %s, got %s; refusing migrations", schema, actualSchema)
+	}
 	apply := func(name string) {
 		t.Helper()
 		sql, err := os.ReadFile(filepath.Join("migrations", name))

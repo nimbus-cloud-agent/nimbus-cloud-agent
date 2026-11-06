@@ -15,7 +15,11 @@ async function api(path, body, method = body ? "POST" : "GET") {
 }
 const s = await api("/sessions", {});
 await writeFile(".local/recovery-session.json", JSON.stringify(s));
-await api(`/sessions/${s.id}`, { title: "Crash recovery verification" }, "PATCH");
+await api(
+  `/sessions/${s.id}`,
+  { title: "Crash recovery verification" },
+  "PATCH",
+);
 const o = await api(`/sessions/${s.id}/messages`, {
   message:
     "Write a long article introducing 100 Python programming tips, with at least 100 words per tip. Do not use tools.",
@@ -23,7 +27,7 @@ const o = await api(`/sessions/${s.id}/messages`, {
 });
 let saved;
 for (let i = 0; i < 90; i++) {
-  const d = await api(`/sessions/${s.id}/events`);
+  const d = await api(`/sessions/${s.id}/turns/${o.turn_id}/events`);
   if (
     d.frames.filter((f) => f.payload.chunk?.type === "text-delta").length >= 8
   ) {
@@ -59,7 +63,10 @@ for (let i = 0; i < 60; i++) {
   await sleep(300);
 }
 assert.ok(healthy);
-const restored = await api(`/sessions/${s.id}/events`);
+const restored = {
+  ...(await api(`/sessions/${s.id}/events`)),
+  ...(await api(`/sessions/${s.id}/turns/${o.turn_id}/events`)),
+};
 assert.equal(restored.outbox.find((x) => x.id === o.id).outcome, "interrupted");
 assert.equal((await api(`/sessions/${s.id}`)).agent_state, "idle");
 assert.ok(restored.frames.length >= saved.frames.length);
@@ -80,7 +87,10 @@ let after;
 for (let i = 0; i < 90; i++) {
   const d = await api(`/sessions/${s.id}/events`);
   if (d.outbox.find((x) => x.id === next.id)?.outcome) {
-    after = d;
+    after = {
+      ...d,
+      ...(await api(`/sessions/${s.id}/turns/${next.turn_id}/events`)),
+    };
     break;
   }
   await sleep(700);

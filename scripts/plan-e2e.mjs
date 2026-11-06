@@ -57,13 +57,16 @@ async function pending(s, o, previous) {
     );
     if (q) return q;
     const turn = d.outbox.find((r) => r.id === o.id);
+    const trace = turn.outcome
+      ? await api(`/sessions/${s.id}/turns/${o.turn_id}/events`)
+      : { events: [] };
     assert.ok(
       !turn.outcome,
       "Turn ended without review: " +
         JSON.stringify({
           outcome: turn.outcome,
           error: turn.error,
-          tools: d.events
+          tools: trace.events
             .filter((e) => e.type === "tool/result")
             .map((e) => e.payload.data),
         }),
@@ -76,7 +79,10 @@ async function completed(s, o, outcome = "completed") {
     return d.outbox.find((r) => r.id === o.id)?.outcome ? d : null;
   }, "turn completion");
   assert.equal(d.outbox.find((r) => r.id === o.id).outcome, outcome);
-  return d;
+  return {
+    ...d,
+    ...(await api(`/sessions/${s.id}/turns/${o.turn_id}/events`)),
+  };
 }
 const request =
   "This is a plan review test. Do not use the sandbox, network, or file tools. Call exit_plan_mode now to submit this Markdown plan: # Greeting plan\\n\\n1. After approval, reply only with PLAN_APPROVED_OK. You must submit the review using the tool; do not just output text. If I request changes, update the plan and call exit_plan_mode again.";
@@ -86,18 +92,22 @@ try {
       "Call tools.exit_plan_mode through run_code with timeoutMs set to 10000.",
   );
   const q = await pending(s, o);
-  const waiting = await api(`/sessions/${s.id}/events`);
+  const waiting = await api(`/sessions/${s.id}/turns/${o.turn_id}/events`);
   const codeCall = waiting.events.findLast(
     (e) => e.type === "tool/call" && e.payload.data.name === "run_code",
   );
   assert.equal(JSON.parse(codeCall.payload.data.arguments).timeoutMs, 10000);
-  await page.getByRole("button", { name: "Approve and continue", exact: true }).waitFor();
+  await page
+    .getByRole("button", { name: "Approve and continue", exact: true })
+    .waitFor();
   await page.screenshot({
     path: ".local/plan-review-pending.png",
     fullPage: true,
   });
   await page.reload();
-  await page.getByRole("button", { name: "Approve and continue", exact: true }).waitFor();
+  await page
+    .getByRole("button", { name: "Approve and continue", exact: true })
+    .waitFor();
   // Exceed the requested PTC timeout while waiting for a human.
   await sleep(12000);
   assert.equal(
@@ -105,7 +115,9 @@ try {
       .status,
     "pending",
   );
-  await page.getByRole("button", { name: "Approve and continue", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Approve and continue", exact: true })
+    .click();
   const approved = await completed(s, o);
   assert.equal((await api(`/sessions/${s.id}`)).options.plan, false);
   assert.ok(
@@ -129,11 +141,17 @@ try {
 
   const next = await start(request);
   const first = await pending(next.s, next.o);
-  await page.getByRole("button", { name: "Request changes", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Request changes", exact: true })
+    .click();
   await page
     .getByPlaceholder("Describe what you would like changed…")
-    .fill("Change the approved response to PLAN_REVISED_OK, then resubmit the plan for review.");
-  await page.getByRole("button", { name: "Submit feedback", exact: true }).click();
+    .fill(
+      "Change the approved response to PLAN_REVISED_OK, then resubmit the plan for review.",
+    );
+  await page
+    .getByRole("button", { name: "Submit feedback", exact: true })
+    .click();
   const revised = await pending(next.s, next.o, first.id);
   assert.ok(JSON.stringify(revised.questions).includes("PLAN_REVISED_OK"));
   assert.equal((await api(`/sessions/${next.s.id}`)).options.plan, true);

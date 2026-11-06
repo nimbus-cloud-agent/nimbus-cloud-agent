@@ -117,7 +117,7 @@ func TestPlanReviewLifecycle(t *testing.T) {
 		t.Fatal(statuses)
 	}
 	await(done, false)
-	persisted, err := db.Question(context.Background(), q.ID)
+	persisted, err := db.Question(context.Background(), sid, q.ID)
 	if err != nil || persisted.Answer == nil || persisted.ResolvedAt == nil {
 		t.Fatal("decision not durable", err)
 	}

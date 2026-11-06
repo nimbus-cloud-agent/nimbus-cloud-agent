@@ -1,4 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { Button, TextArea, Input, Modal } from "@heroui/react";
 import {
   Cloud,
@@ -29,32 +35,49 @@ import {
   api,
   history,
   decodeJSON,
-  type WireEvent,
-  type StreamFrame,
   sandboxLabels,
   type Session,
-  type Event,
+  type TurnSummary,
   type Outbox,
   type Options,
   type MessageImage,
   type UserQuestion,
 } from "./api";
-import { decodeEvent } from "./event-codec";
-import { Picker, Toggle, Fold } from "./components";
+import { Picker, Toggle } from "./components";
 import TerminalPanel from "./Terminal";
 import Settings from "./Settings";
 import Conversation from "./Conversation";
+import { TurnTraceProvider, TrajectoryTurn } from "./TurnTrace";
 import Library from "./Library";
 import LibraryPreview from "./LibraryPreview";
 import PanelDivider from "./PanelDivider";
 import ImageGallery from "./ImageGallery";
+function mergeRows<T>(
+  current: T[],
+  incoming: T[],
+  key: (row: T) => string,
+): T[] {
+  const rows = new Map(current.map((row) => [key(row), row]));
+  for (const row of incoming) rows.set(key(row), row);
+  return [...rows.values()];
+}
 export default function App() {
   const [sessions, setSessions] = useState<Session[]>([]),
     [id, setId] = useState(location.hash.slice(1)),
-    [events, setEvents] = useState<Event[]>([]),
-    [outbox, setOutbox] = useState<Outbox[]>([]),
-    [frames, setFrames] = useState<StreamFrame[]>([]);
+    [turns, setTurns] = useState<TurnSummary[]>([]),
+    [outbox, setOutbox] = useState<Outbox[]>([]);
   const [questions, setQuestions] = useState<UserQuestion[]>([]);
+  const [beforeTurn, setBeforeTurn] = useState<string | null>(null);
+  const [historySession, setHistorySession] = useState("");
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState("");
+  const [historyAttempt, setHistoryAttempt] = useState(0);
+  const olderRequest = useRef<AbortController | null>(null);
+  const olderCursor = useRef<string | null>(null);
+  const upwardIntent = useRef(0);
+  const touchY = useRef<number | null>(null);
+  const prependAnchor = useRef<{ turn: string; top: number } | null>(null);
+  const readingPosition = useRef(0);
   const [draft, setDraft] = useState(""),
     [error, setError] = useState(""),
     [settings, setSettings] = useState(location.search.includes("settings=")),
@@ -69,6 +92,22 @@ export default function App() {
     [sending, setSending] = useState(false),
     [rename, setRename] = useState<string | null>(null),
     [deleteID, setDeleteID] = useState("");
+  const [mobile, setMobile] = useState(
+    () => matchMedia("(max-width: 1100px)").matches,
+  );
+  const historyVisible = panel === "chat" && (!mobile || tab === "chat");
+  const terminalVisible = !mobile || tab === "terminal";
+  const loadedHistory = useRef<{
+    id: string;
+    loaded: boolean;
+    anchor?: string;
+  }>({ id: "", loaded: false });
+  useEffect(() => {
+    const media = matchMedia("(max-width: 1100px)");
+    const change = () => setMobile(media.matches);
+    media.addEventListener("change", change);
+    return () => media.removeEventListener("change", change);
+  }, []);
   const [draftImages, setDraftImages] = useState<MessageImage[]>([]);
   const [uploadingImages, setUploadingImages] = useState(false);
   const [draggingImage, setDraggingImage] = useState(false);
@@ -82,8 +121,7 @@ export default function App() {
     client: string;
     imagesKey: string;
   } | null>(null);
-  const end = useRef<HTMLDivElement>(null),
-    scroll = useRef<HTMLDivElement>(null),
+  const scroll = useRef<HTMLDivElement>(null),
     nearBottom = useRef(true);
   const current = sessions.find((x) => x.id === id);
   useEffect(() => {
@@ -101,71 +139,168 @@ export default function App() {
   }, []);
   useEffect(() => {
     location.hash = id;
-    setEvents([]);
+    loadedHistory.current = { id, loaded: false };
+    setTurns([]);
     setOutbox([]);
-    setFrames([]);
     setQuestions([]);
+    setBeforeTurn(null);
+    olderCursor.current = null;
+    olderRequest.current?.abort();
+    olderRequest.current = null;
+    prependAnchor.current = null;
+    readingPosition.current = 0;
+    upwardIntent.current = 0;
+    setHistoryError("");
+    setHistoryLoading(false);
     setDraftImages([]);
-    if (!id) return;
+  }, [id]);
+  useEffect(() => {
+    if (!id || !historyVisible) return;
     let active = true;
-    let source: EventSource;
-    nearBottom.current = true;
-    (async () => {
+    const abort = new AbortController();
+    let source: EventSource | undefined;
+    if (!loadedHistory.current.loaded) nearBottom.current = true;
+    void (async () => {
       try {
-        let after = -1,
-          all: Event[] = [];
-        while (true) {
-          const d = await history(id, after);
+        if (!loadedHistory.current.loaded) {
+          setHistoryLoading(true);
+          const d = await history(id, undefined, abort.signal);
           if (!active) return;
-          all = [...all, ...d.events];
+          setHistorySession(id);
           setOutbox(d.outbox);
-          setFrames(d.frames ?? []);
-          setQuestions(d.questions ?? []);
-          if (!d.has_more) break;
-          after = d.events.at(-1)?.seq ?? after;
+          setTurns(d.turns);
+          setQuestions(d.questions);
+          setBeforeTurn(d.before_turn);
+          olderCursor.current = d.before_turn;
+          loadedHistory.current = {
+            id,
+            loaded: true,
+            anchor: d.outbox[0]?.turn_id,
+          };
+          setHistoryLoading(false);
         }
-        setEvents(all);
-        after = all.at(-1)?.seq ?? -1;
+        const anchor = loadedHistory.current.anchor;
         source = new EventSource(
-          `/api/sessions/${id}/stream?after_seq=${after}`,
+          `/api/sessions/${id}/stream?include_question_content=false${anchor ? `&since_turn=${encodeURIComponent(anchor)}` : ""}`,
         );
-        source.onopen = () => setOnline(true);
-        source.onerror = () => setOnline(false);
-        source.addEventListener("session", (e) => {
-          const v = decodeEvent(decodeJSON<WireEvent>(e.data));
-          setEvents((xs) =>
-            xs.some((x) => x.seq === v.seq)
-              ? xs
-              : [...xs, v].sort((a, b) => a.seq - b.seq),
-          );
-        });
+        source.onopen = () => {
+          if (active) setOnline(true);
+        };
+        source.onerror = () => {
+          if (active) setOnline(false);
+        };
         source.addEventListener("state", (e) => {
+          if (!active) return;
           const v = decodeJSON<Session>(e.data);
           setSessions((xs) => xs.map((x) => (x.id === v.id ? v : x)));
         });
-        source.addEventListener("outbox", (e) =>
-          setOutbox(decodeJSON<Outbox[]>(e.data)),
-        );
-        source.addEventListener("questions", (e) =>
-          setQuestions(decodeJSON<UserQuestion[]>(e.data)),
-        );
-        source.addEventListener("frame", (e) => {
-          const v = decodeJSON<StreamFrame>(e.data);
-          setFrames((xs) => (xs.some((x) => x.id === v.id) ? xs : [...xs, v]));
+        source.addEventListener("outbox", (e) => {
+          if (active)
+            setOutbox((xs) =>
+              mergeRows(xs, decodeJSON<Outbox[]>(e.data), (x) => x.turn_id),
+            );
+        });
+        source.addEventListener("turns", (e) => {
+          if (active)
+            setTurns((xs) =>
+              mergeRows(
+                xs,
+                decodeJSON<TurnSummary[]>(e.data),
+                (x) => x.turn_id,
+              ),
+            );
+        });
+        source.addEventListener("questions", (e) => {
+          if (active)
+            setQuestions((xs) =>
+              mergeRows(xs, decodeJSON<UserQuestion[]>(e.data), (x) => x.id),
+            );
         });
       } catch (e) {
-        setError(String(e));
+        if (active) {
+          setHistoryError(String(e));
+          setHistoryLoading(false);
+        }
       }
     })();
     return () => {
       active = false;
+      abort.abort();
+      olderRequest.current?.abort();
       source?.close();
     };
-  }, [id]);
-  useEffect(() => {
-    if (nearBottom.current)
-      end.current?.scrollIntoView({ behavior: "instant", block: "end" });
-  }, [events, frames, outbox, questions]);
+  }, [id, historyAttempt, historyVisible]);
+  const followOutput = useCallback(() => {
+    if (nearBottom.current && !prependAnchor.current && scroll.current)
+      scroll.current.scrollTop = scroll.current.scrollHeight;
+  }, []);
+  useLayoutEffect(() => {
+    if (!historyVisible || !loadedHistory.current.loaded || !scroll.current)
+      return;
+    if (nearBottom.current) followOutput();
+    else scroll.current.scrollTop = readingPosition.current;
+  }, [historyVisible, followOutput]);
+  useLayoutEffect(() => {
+    const anchor = prependAnchor.current;
+    if (anchor && scroll.current) {
+      const node = Array.from(
+        scroll.current.querySelectorAll<HTMLElement>("[data-turn-id]"),
+      ).find((el) => el.dataset.turnId === anchor.turn);
+      if (node)
+        scroll.current.scrollTop +=
+          node.getBoundingClientRect().top - anchor.top;
+      prependAnchor.current = null;
+    } else followOutput();
+  }, [outbox, turns, questions, followOutput]);
+  async function loadOlder() {
+    const before = olderCursor.current;
+    if (!id || !before || olderRequest.current) return;
+    const sid = id;
+    const abort = new AbortController();
+    olderRequest.current = abort;
+    upwardIntent.current = 0;
+    setHistoryLoading(true);
+    setHistoryError("");
+    try {
+      const page = await history(sid, before, abort.signal);
+      if (abort.signal.aborted || selectedID.current !== sid) return;
+      const container = scroll.current;
+      const top = container?.getBoundingClientRect().top ?? 0;
+      const visible =
+        container &&
+        Array.from(
+          container.querySelectorAll<HTMLElement>("[data-turn-id]"),
+        ).find((el) => el.getBoundingClientRect().bottom > top);
+      if (visible)
+        prependAnchor.current = {
+          turn: visible.dataset.turnId!,
+          top: visible.getBoundingClientRect().top,
+        };
+      nearBottom.current = false;
+      // Older snapshots cannot overwrite a newer live upsert arriving in flight.
+      setOutbox((xs) => mergeRows(page.outbox, xs, (x) => x.turn_id));
+      setTurns((xs) => mergeRows(page.turns, xs, (x) => x.turn_id));
+      setQuestions((xs) => mergeRows(page.questions, xs, (x) => x.id));
+      olderCursor.current = page.before_turn;
+      setBeforeTurn(page.before_turn);
+    } catch (e) {
+      if (!abort.signal.aborted && selectedID.current === sid)
+        setHistoryError(String(e));
+    } finally {
+      if (olderRequest.current === abort) {
+        olderRequest.current = null;
+        setHistoryLoading(false);
+      }
+    }
+  }
+  function userScrollUp() {
+    if (olderRequest.current) {
+      upwardIntent.current = 0;
+      return;
+    }
+    upwardIntent.current = Date.now();
+    if (scroll.current && scroll.current.scrollTop < 160) void loadOlder();
+  }
   async function newSession() {
     try {
       const s = await api<Session>("/sessions", "POST");
@@ -329,567 +464,636 @@ export default function App() {
     },
   ];
   return (
-    <div className="app">
-      <header className="topbar">
-        <div className="brand">
-          <span className="brand-mark">
-            <Cloud size={24} />
-          </span>
-          <strong>Nimbus</strong>
-          <span className="brand-divider" />
-          <span>Cloud Agent workspace</span>
-        </div>
-        <div className="top-actions">
-          <span className="connection">
-            <span className={"dot " + (online ? "online" : "")} />
-            {online ? "Connected to local service" : "Reconnecting…"}
-          </span>
-          <Button size="sm" variant="ghost" onPress={() => setSettings(true)}>
-            <SettingsIcon size={18} />
-            Settings
-          </Button>
-        </div>
-      </header>
-      <nav className="mobile-tabs">
-        {[
-          ["sessions", "Sessions", <PanelLeft size={16} />],
-          ["chat", "Chat", <MessageSquare size={16} />],
-          ["terminal", "Terminal", <TerminalSquare size={16} />],
-        ].map(([k, t, icon]) => (
-          <Button
-            key={String(k)}
-            variant={tab === k ? "secondary" : "ghost"}
-            onPress={() => setTab(String(k))}
-          >
-            {icon}
-            {t}
-          </Button>
-        ))}
-      </nav>
-      {error && (
-        <div className="error-banner" role="alert">
-          <span>{error}</span>
-          <Button
-            isIconOnly
-            size="sm"
-            variant="ghost"
-            aria-label="Dismiss alert"
-            onPress={() => setError("")}
-          >
-            <X size={14} />
-          </Button>
-        </div>
-      )}
-      <main className={"workspace show-" + tab}>
-        <aside className="sidebar">
-          <div className="sidebar-intro">
-            <span>My workspace</span>
-            <Layers3 size={16} />
-          </div>
-          <Button
-            className="new-session"
-            variant="primary"
-            onPress={newSession}
-          >
-            <Plus size={18} />
-            New chat
-          </Button>
-          <div className="session-search">
-            <Search size={17} />
-            <Input
-              aria-label="Search chats"
-              placeholder="Search chats…"
-              value={filter}
-              onChange={(e) => setFilter(e.target.value)}
-            />
-          </div>
-          <div className="sidebar-label">
-            <span>Library</span>
-          </div>
-          <Button
-            variant={panel === "library" ? "secondary" : "ghost"}
-            className={
-              "session-item library-nav" +
-              (panel === "library" ? " is-selected" : "")
-            }
-            aria-current={panel === "library" ? "page" : undefined}
-            onPress={() => {
-              setPanel("library");
-              setTab("chat");
-            }}
-          >
-            <LibraryIcon size={18} />
-            <span className="session-details">
-              <strong>Library</strong>
-              <span>Files the agent saved for you</span>
+    <TurnTraceProvider key={id}>
+      <div className="app">
+        <header className="topbar">
+          <div className="brand">
+            <span className="brand-mark">
+              <Cloud size={24} />
             </span>
-          </Button>
-          <div className="sidebar-label">
-            <span>Recent chats</span>
-            <span>{sessions.length}</span>
+            <strong>Nimbus</strong>
+            <span className="brand-divider" />
+            <span>Cloud Agent workspace</span>
           </div>
-          <div className="session-list">
-            {sessions
-              .filter((s) =>
-                s.title.toLowerCase().includes(filter.toLowerCase()),
-              )
-              .map((s) => (
-                <Button
-                  key={s.id}
-                  variant={id === s.id ? "secondary" : "ghost"}
-                  className={
-                    "session-item" + (id === s.id ? " is-selected" : "")
-                  }
-                  aria-current={id === s.id ? "page" : undefined}
-                  onPress={() => {
-                    setId(s.id);
-                    setPanel("chat");
-                    setTab("chat");
+          <div className="top-actions">
+            <span className="connection">
+              <span className={"dot " + (online ? "online" : "")} />
+              {online ? "Connected to local service" : "Reconnecting…"}
+            </span>
+            <Button size="sm" variant="ghost" onPress={() => setSettings(true)}>
+              <SettingsIcon size={18} />
+              Settings
+            </Button>
+          </div>
+        </header>
+        <nav className="mobile-tabs">
+          {[
+            ["sessions", "Sessions", <PanelLeft size={16} />],
+            ["chat", "Chat", <MessageSquare size={16} />],
+            ["terminal", "Terminal", <TerminalSquare size={16} />],
+          ].map(([k, t, icon]) => (
+            <Button
+              key={String(k)}
+              variant={tab === k ? "secondary" : "ghost"}
+              onPress={() => setTab(String(k))}
+            >
+              {icon}
+              {t}
+            </Button>
+          ))}
+        </nav>
+        {error && (
+          <div className="error-banner" role="alert">
+            <span>{error}</span>
+            <Button
+              isIconOnly
+              size="sm"
+              variant="ghost"
+              aria-label="Dismiss alert"
+              onPress={() => setError("")}
+            >
+              <X size={14} />
+            </Button>
+          </div>
+        )}
+        <main className={"workspace show-" + tab}>
+          <aside className="sidebar">
+            <div className="sidebar-intro">
+              <span>My workspace</span>
+              <Layers3 size={16} />
+            </div>
+            <Button
+              className="new-session"
+              variant="primary"
+              onPress={newSession}
+            >
+              <Plus size={18} />
+              New chat
+            </Button>
+            <div className="session-search">
+              <Search size={17} />
+              <Input
+                aria-label="Search chats"
+                placeholder="Search chats…"
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
+              />
+            </div>
+            <div className="sidebar-label">
+              <span>Library</span>
+            </div>
+            <Button
+              variant={panel === "library" ? "secondary" : "ghost"}
+              className={
+                "session-item library-nav" +
+                (panel === "library" ? " is-selected" : "")
+              }
+              aria-current={panel === "library" ? "page" : undefined}
+              onPress={() => {
+                setPanel("library");
+                setTab("chat");
+              }}
+            >
+              <LibraryIcon size={18} />
+              <span className="session-details">
+                <strong>Library</strong>
+                <span>Files the agent saved for you</span>
+              </span>
+            </Button>
+            <div className="sidebar-label">
+              <span>Recent chats</span>
+              <span>{sessions.length}</span>
+            </div>
+            <div className="session-list">
+              {sessions
+                .filter((s) =>
+                  s.title.toLowerCase().includes(filter.toLowerCase()),
+                )
+                .map((s) => (
+                  <Button
+                    key={s.id}
+                    variant={id === s.id ? "secondary" : "ghost"}
+                    className={
+                      "session-item" + (id === s.id ? " is-selected" : "")
+                    }
+                    aria-current={id === s.id ? "page" : undefined}
+                    onPress={() => {
+                      setId(s.id);
+                      setPanel("chat");
+                      setTab("chat");
+                    }}
+                  >
+                    <MessageSquare size={18} />
+                    <span className="session-details">
+                      <strong title={s.title}>{s.title}</strong>
+                      <span>
+                        <i
+                          className={
+                            "dot " +
+                            (s.sandbox.state === "running"
+                              ? "online"
+                              : s.sandbox.state === "paused"
+                                ? "paused"
+                                : "")
+                          }
+                        />
+                        {sandboxLabels[s.sandbox.state]}
+                        <time>
+                          {new Date(s.last_active_at).toLocaleDateString(
+                            "en-US",
+                            { month: "numeric", day: "numeric" },
+                          )}
+                        </time>
+                      </span>
+                      {s.sandbox.e2b_sandbox_id && (
+                        <span
+                          className="session-sandbox"
+                          title={s.sandbox.e2b_sandbox_id}
+                        >
+                          <span>{s.sandbox.info?.region ?? "us-west-1"}</span>
+                          <code>{s.sandbox.e2b_sandbox_id.slice(0, 8)}…</code>
+                        </span>
+                      )}
+                    </span>
+                    {s.agent_state !== "idle" && <span className="pulse" />}
+                  </Button>
+                ))}
+              {sessions.length === 0 && (
+                <p className="empty-list">
+                  Every new task
+                  <br />
+                  starts with a new conversation.
+                </p>
+              )}
+            </div>
+            <div className="sidebar-footer">
+              <span className="avatar">
+                <Cloud size={19} />
+              </span>
+              <div>
+                <strong>Local workspace</strong>
+                <small>DeepSeek + E2B Cloud</small>
+              </div>
+            </div>
+          </aside>
+          <section className="chat-panel">
+            {panel === "library" ? (
+              <Library
+                onOpenFile={(id) => setPreview({ id })}
+                onError={setError}
+              />
+            ) : (
+              <>
+                <div className="chat-heading">
+                  <div>
+                    {rename !== null ? (
+                      <div className="row">
+                        <Input
+                          aria-label="Chat title"
+                          value={rename}
+                          onChange={(e) => setRename(e.target.value)}
+                        />
+                        <Button
+                          isIconOnly
+                          size="sm"
+                          aria-label="Save title"
+                          onPress={() =>
+                            api(`/sessions/${id}`, "PATCH", { title: rename })
+                              .then(() => {
+                                setRename(null);
+                              })
+                              .catch((e) => setError(e.message))
+                          }
+                        >
+                          <Check size={15} />
+                        </Button>
+                      </div>
+                    ) : (
+                      <h1>
+                        <span
+                          className="conversation-title"
+                          title={current?.title}
+                        >
+                          {current?.title ?? "Start something new"}
+                        </span>
+                        {current && (
+                          <Button
+                            isIconOnly
+                            size="sm"
+                            variant="ghost"
+                            aria-label="Rename chat"
+                            onPress={() => setRename(current.title)}
+                          >
+                            <Pencil size={16} />
+                          </Button>
+                        )}
+                      </h1>
+                    )}
+                    <p>
+                      <span className="dot online" />
+                      Chats are saved automatically. The sandbox runs on demand.
+                    </p>
+                  </div>
+                  <div className="row">
+                    <Button
+                      className={
+                        "trajectory-toggle" +
+                        (view === "trajectory" ? " is-active" : "")
+                      }
+                      size="sm"
+                      variant="ghost"
+                      onPress={() =>
+                        setView(view === "chat" ? "trajectory" : "chat")
+                      }
+                    >
+                      <Workflow size={17} />
+                      {view === "chat" ? "Activity" : "Back to chat"}
+                    </Button>
+                    {current && (
+                      <Button
+                        isIconOnly
+                        size="sm"
+                        variant="ghost"
+                        aria-label="Delete chat"
+                        onPress={() => setDeleteID(id)}
+                      >
+                        <Trash2 size={17} />
+                      </Button>
+                    )}
+                  </div>
+                </div>
+                {current && (
+                  <div className="model-bar">
+                    <span
+                      className="model-label"
+                      title="deepseek-flash"
+                      aria-label="Model: DeepSeek Flash"
+                    >
+                      <Cloud size={16} />
+                      DeepSeek Flash
+                    </span>
+                    <span className="toolbar-divider" />
+                    <Toggle
+                      label="Plan"
+                      value={current.options.plan}
+                      onChange={(v) => options({ plan: v })}
+                    />
+                    <div
+                      className="thinking-control"
+                      title="Reasoning effort affects depth and response time. Changes apply to the next turn."
+                    >
+                      <BrainCircuit size={16} />
+                      <span>Reasoning</span>
+                      <Picker
+                        label="Reasoning effort"
+                        value={current.options.thinking}
+                        values={["off", "low", "high", "max"].map((x) => [
+                          x,
+                          x,
+                        ])}
+                        onChange={(v) => options({ thinking: v })}
+                      />
+                    </div>
+                    <span className="toolbar-divider" />
+                    <span className="model-label" title="Wasm PTC">
+                      <Braces size={16} />
+                      Wasm PTC
+                    </span>
+                  </div>
+                )}
+                <div
+                  ref={scroll}
+                  className="conversation"
+                  tabIndex={0}
+                  onWheel={(e) => {
+                    if (e.deltaY < 0) userScrollUp();
+                  }}
+                  onTouchStart={(e) => {
+                    touchY.current = e.touches[0]?.clientY ?? null;
+                  }}
+                  onTouchMove={(e) => {
+                    const next = e.touches[0]?.clientY;
+                    if (
+                      next != null &&
+                      touchY.current != null &&
+                      next > touchY.current
+                    )
+                      userScrollUp();
+                    touchY.current = next ?? null;
+                  }}
+                  onKeyDown={(e) => {
+                    if (["ArrowUp", "PageUp", "Home"].includes(e.key))
+                      userScrollUp();
+                  }}
+                  onScroll={() => {
+                    if (!historyVisible) return;
+                    const e = scroll.current!;
+                    readingPosition.current = e.scrollTop;
+                    nearBottom.current =
+                      e.scrollHeight - e.scrollTop - e.clientHeight < 120;
+                    if (
+                      e.scrollTop < 160 &&
+                      Date.now() - upwardIntent.current < 500
+                    )
+                      void loadOlder();
                   }}
                 >
-                  <MessageSquare size={18} />
-                  <span className="session-details">
-                    <strong title={s.title}>{s.title}</strong>
-                    <span>
-                      <i
-                        className={
-                          "dot " +
-                          (s.sandbox.state === "running"
-                            ? "online"
-                            : s.sandbox.state === "paused"
-                              ? "paused"
-                              : "")
+                  {historyLoading && <p role="status">Loading conversation…</p>}
+                  {historyError && (
+                    <div role="alert">
+                      {historyError}{" "}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          beforeTurn
+                            ? void loadOlder()
+                            : setHistoryAttempt((n) => n + 1)
                         }
-                      />
-                      {sandboxLabels[s.sandbox.state]}
-                      <time>
-                        {new Date(s.last_active_at).toLocaleDateString(
-                          "en-US",
-                          { month: "numeric", day: "numeric" },
-                        )}
-                      </time>
-                    </span>
-                    {s.sandbox.e2b_sandbox_id && (
-                      <span
-                        className="session-sandbox"
-                        title={s.sandbox.e2b_sandbox_id}
                       >
-                        <span>{s.sandbox.info?.region ?? "us-west-1"}</span>
-                        <code>{s.sandbox.e2b_sandbox_id.slice(0, 8)}…</code>
+                        Retry conversation history
+                      </button>
+                    </div>
+                  )}
+                  {beforeTurn && !historyLoading && (
+                    <p className="history-hint">
+                      Scroll up to load older turns
+                    </p>
+                  )}
+                  {!historyVisible ||
+                  (historySession !== id && id) ? null : outbox.length === 0 ? (
+                    <div className="welcome">
+                      <div className="welcome-symbol">
+                        <Cloud size={38} strokeWidth={1.5} />
+                      </div>
+                      <h2>Give Nimbus your next task.</h2>
+                      <p>
+                        Describe what you need, and we’ll work through it
+                        together.
+                        <br />
+                        Write code, analyze data, and run commands in a
+                        dedicated cloud environment.
+                      </p>
+                      <div className="suggestions">
+                        {suggestions.map((s) => (
+                          <Button
+                            key={s.title}
+                            variant="outline"
+                            className="suggestion"
+                            onPress={() => setDraft(s.prompt)}
+                          >
+                            <span className="suggestion-icon">{s.icon}</span>
+                            <span className="suggestion-copy">
+                              <strong>{s.title}</strong>
+                              <span>{s.desc}</span>
+                            </span>
+                            <ChevronRight
+                              size={16}
+                              className="suggestion-chevron"
+                            />
+                          </Button>
+                        ))}
+                      </div>
+                      <span className="welcome-note">
+                        <span className="dot online" />
+                        Start with a conversation. The sandbox starts when a
+                        task needs it.
                       </span>
-                    )}
-                  </span>
-                  {s.agent_state !== "idle" && <span className="pulse" />}
-                </Button>
-              ))}
-            {sessions.length === 0 && (
-              <p className="empty-list">
-                Every new task
-                <br />
-                starts with a new conversation.
-              </p>
+                    </div>
+                  ) : view === "trajectory" ? (
+                    <div className="trajectory">
+                      {outbox.map((o) => (
+                        <TrajectoryTurn
+                          key={o.turn_id}
+                          sessionId={id}
+                          turnId={o.turn_id}
+                          title={o.content}
+                          running={!o.outcome && o.status !== "failed"}
+                        />
+                      ))}
+                    </div>
+                  ) : (
+                    <Conversation
+                      sessionId={id}
+                      turns={turns}
+                      outbox={outbox}
+                      questions={questions}
+                      retryError={setError}
+                      onOutput={followOutput}
+                      onOpenLibraryFile={(fileId) => setPreview({ id: fileId })}
+                    />
+                  )}
+                </div>
+                <div className="composer-wrap">
+                  <div
+                    className={
+                      "composer" + (draggingImage ? " is-dragging" : "")
+                    }
+                    onDragOver={(e) => {
+                      if (e.dataTransfer.types.includes("Files")) {
+                        e.preventDefault();
+                        setDraggingImage(true);
+                      }
+                    }}
+                    onDragLeave={(e) => {
+                      if (!e.currentTarget.contains(e.relatedTarget as Node))
+                        setDraggingImage(false);
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      setDraggingImage(false);
+                      void addImages(Array.from(e.dataTransfer.files));
+                    }}
+                  >
+                    <ImageGallery
+                      images={draftImages}
+                      onRemove={(imageID) =>
+                        setDraftImages((images) =>
+                          images.filter((image) => image.id !== imageID),
+                        )
+                      }
+                    />
+                    <TextArea
+                      aria-label="Send a message"
+                      placeholder="Send a message, paste an image, or describe what you want to do…"
+                      value={draft}
+                      onChange={(e) => setDraft(e.target.value)}
+                      onPaste={(e) => {
+                        const images = Array.from(e.clipboardData.items)
+                          .filter((item) => item.type.startsWith("image/"))
+                          .map((item) => item.getAsFile())
+                          .filter((file): file is File => !!file);
+                        if (images.length) {
+                          e.preventDefault();
+                          void addImages(images);
+                        }
+                      }}
+                      onKeyDown={(e) => {
+                        if (
+                          e.key === "Enter" &&
+                          !e.shiftKey &&
+                          !e.nativeEvent.isComposing
+                        ) {
+                          e.preventDefault();
+                          send();
+                        }
+                      }}
+                      rows={2}
+                    />
+                    <div className="composer-bottom">
+                      <div className="composer-tools">
+                        <input
+                          ref={imageInput}
+                          type="file"
+                          accept="image/png,image/jpeg,image/webp,image/gif"
+                          multiple
+                          hidden
+                          aria-label="Choose images"
+                          onChange={(e) => {
+                            void addImages(Array.from(e.target.files ?? []));
+                            e.target.value = "";
+                          }}
+                        />
+                        <span title="Attach images by selecting, pasting, or dropping them · Up to 4 images, 5 MB each">
+                          <Button
+                            isIconOnly
+                            size="sm"
+                            variant="ghost"
+                            aria-label="Attach images"
+                            isPending={uploadingImages}
+                            isDisabled={sending}
+                            onPress={() => imageInput.current?.click()}
+                          >
+                            <ImagePlus size={18} />
+                          </Button>
+                        </span>
+                        <span>
+                          <span
+                            className={
+                              "dot " +
+                              (current?.sandbox.state === "running"
+                                ? "online"
+                                : "")
+                            }
+                          />
+                          {draggingImage
+                            ? "Release to attach images"
+                            : uploadingImages
+                              ? "Uploading images…"
+                              : current?.sandbox.state === "running"
+                                ? "Connected to your sandbox"
+                                : "Sandbox starts on demand"}
+                        </span>
+                      </div>
+                      <div className="row">
+                        {current && current.agent_state !== "idle" && (
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onPress={() =>
+                              api(`/sessions/${id}/stop`, "POST").catch((e) =>
+                                setError(e.message),
+                              )
+                            }
+                          >
+                            <Square size={12} />
+                            Stop
+                          </Button>
+                        )}
+                        <Button
+                          isIconOnly
+                          aria-label="Send"
+                          variant="primary"
+                          className="send-button"
+                          isDisabled={
+                            (!draft.trim() && !draftImages.length) ||
+                            uploadingImages
+                          }
+                          isPending={sending}
+                          onPress={send}
+                        >
+                          <ArrowUp size={20} />
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="composer-note">
+                    <span>
+                      <kbd>Enter</kbd> to send <kbd>Shift + Enter</kbd> for a
+                      new line
+                    </span>
+                    <span>{"Tools run through Wasm PTC"}</span>
+                  </div>
+                </div>
+              </>
             )}
-          </div>
-          <div className="sidebar-footer">
-            <span className="avatar">
-              <Cloud size={19} />
-            </span>
-            <div>
-              <strong>Local workspace</strong>
-              <small>DeepSeek + E2B Cloud</small>
-            </div>
-          </div>
-        </aside>
-        <section className="chat-panel">
-          {panel === "library" ? (
-            <Library
-              onOpenFile={(id) => setPreview({ id })}
-              onError={setError}
-            />
-          ) : (
-            <>
-          <div className="chat-heading">
-            <div>
-              {rename !== null ? (
-                <div className="row">
-                  <Input
-                    aria-label="Chat title"
-                    value={rename}
-                    onChange={(e) => setRename(e.target.value)}
-                  />
+          </section>
+          <PanelDivider />
+          {terminalVisible && (
+            <TerminalPanel session={current} onError={setError} />
+          )}
+        </main>
+        <Settings
+          open={settings}
+          onClose={() => setSettings(false)}
+          onError={setError}
+        />
+        <LibraryPreview
+          fileId={preview?.id ?? null}
+          version={preview?.version}
+          onClose={() => setPreview(null)}
+          onError={setError}
+          onOpenLibraryFile={(fileId) => setPreview({ id: fileId })}
+        />
+        <Modal
+          isOpen={!!deleteID}
+          onOpenChange={(v) => {
+            if (!v) setDeleteID("");
+          }}
+        >
+          <Modal.Backdrop>
+            <Modal.Container>
+              <Modal.Dialog>
+                <Modal.CloseTrigger />
+                <Modal.Header>
+                  <Modal.Heading>Delete this chat?</Modal.Heading>
+                </Modal.Header>
+                <Modal.Body>
+                  <p>
+                    This permanently deletes the dedicated sandbox and the
+                    entire chat history.
+                  </p>
+                </Modal.Body>
+                <Modal.Footer>
+                  <Button variant="secondary" onPress={() => setDeleteID("")}>
+                    Cancel
+                  </Button>
                   <Button
-                    isIconOnly
-                    size="sm"
-                    aria-label="Save title"
+                    variant="danger"
                     onPress={() =>
-                      api(`/sessions/${id}`, "PATCH", { title: rename })
+                      api(`/sessions/${deleteID}`, "DELETE")
                         .then(() => {
-                          setRename(null);
+                          const remaining = sessions.filter(
+                            (s) => s.id !== deleteID,
+                          );
+                          setSessions(remaining);
+                          setId((selected) =>
+                            selected === deleteID
+                              ? (remaining[0]?.id ?? "")
+                              : selected,
+                          );
+                          setDeleteID("");
                         })
                         .catch((e) => setError(e.message))
                     }
                   >
-                    <Check size={15} />
+                    Delete chat
                   </Button>
-                </div>
-              ) : (
-                <h1>
-                  <span className="conversation-title" title={current?.title}>
-                    {current?.title ?? "Start something new"}
-                  </span>
-                  {current && (
-                    <Button
-                      isIconOnly
-                      size="sm"
-                      variant="ghost"
-                      aria-label="Rename chat"
-                      onPress={() => setRename(current.title)}
-                    >
-                      <Pencil size={16} />
-                    </Button>
-                  )}
-                </h1>
-              )}
-              <p>
-                <span className="dot online" />
-                Chats are saved automatically. The sandbox runs on demand.
-              </p>
-            </div>
-            <div className="row">
-              <Button
-                className={
-                  "trajectory-toggle" +
-                  (view === "trajectory" ? " is-active" : "")
-                }
-                size="sm"
-                variant="ghost"
-                onPress={() => setView(view === "chat" ? "trajectory" : "chat")}
-              >
-                <Workflow size={17} />
-                {view === "chat" ? "Activity" : "Back to chat"}
-              </Button>
-              {current && (
-                <Button
-                  isIconOnly
-                  size="sm"
-                  variant="ghost"
-                  aria-label="Delete chat"
-                  onPress={() => setDeleteID(id)}
-                >
-                  <Trash2 size={17} />
-                </Button>
-              )}
-            </div>
-          </div>
-          {current && (
-            <div className="model-bar">
-              <span
-                className="model-label"
-                title="deepseek-flash"
-                aria-label="Model: DeepSeek Flash"
-              >
-                <Cloud size={16} />
-                DeepSeek Flash
-              </span>
-              <span className="toolbar-divider" />
-              <Toggle
-                label="Plan"
-                value={current.options.plan}
-                onChange={(v) => options({ plan: v })}
-              />
-              <div
-                className="thinking-control"
-                title="Reasoning effort affects depth and response time. Changes apply to the next turn."
-              >
-                <BrainCircuit size={16} />
-                <span>Reasoning</span>
-                <Picker
-                  label="Reasoning effort"
-                  value={current.options.thinking}
-                  values={["off", "low", "high", "max"].map((x) => [x, x])}
-                  onChange={(v) => options({ thinking: v })}
-                />
-              </div>
-              <span className="toolbar-divider" />
-              <span className="model-label" title="Wasm PTC">
-                <Braces size={16} />
-                Wasm PTC
-              </span>
-            </div>
-          )}
-          <div
-            ref={scroll}
-            className="conversation"
-            onScroll={() => {
-              const e = scroll.current!;
-              nearBottom.current =
-                e.scrollHeight - e.scrollTop - e.clientHeight < 120;
-            }}
-          >
-            {outbox.length === 0 ? (
-              <div className="welcome">
-                <div className="welcome-symbol">
-                  <Cloud size={38} strokeWidth={1.5} />
-                </div>
-                <h2>Give Nimbus your next task.</h2>
-                <p>
-                  Describe what you need, and we’ll work through it together.
-                  <br />
-                  Write code, analyze data, and run commands in a dedicated cloud environment.
-                </p>
-                <div className="suggestions">
-                  {suggestions.map((s) => (
-                    <Button
-                      key={s.title}
-                      variant="outline"
-                      className="suggestion"
-                      onPress={() => setDraft(s.prompt)}
-                    >
-                      <span className="suggestion-icon">{s.icon}</span>
-                      <span className="suggestion-copy">
-                        <strong>{s.title}</strong>
-                        <span>{s.desc}</span>
-                      </span>
-                      <ChevronRight size={16} className="suggestion-chevron" />
-                    </Button>
-                  ))}
-                </div>
-                <span className="welcome-note">
-                  <span className="dot online" />
-                  Start with a conversation. The sandbox starts when a task needs it.
-                </span>
-              </div>
-            ) : view === "trajectory" ? (
-              <div className="trajectory">
-                {events.map((e) => (
-                  <Fold
-                    key={e.seq}
-                    title={
-                      <span>
-                        #{e.seq} {e.type}
-                      </span>
-                    }
-                  >
-                    <pre>{JSON.stringify(e.payload, null, 2)}</pre>
-                  </Fold>
-                ))}
-              </div>
-            ) : (
-              <Conversation
-                sessionId={id}
-                events={events}
-                outbox={outbox}
-                frames={frames}
-                questions={questions}
-                retryError={setError}
-                onOpenLibraryFile={(fileId) => setPreview({ id: fileId })}
-              />
-            )}
-            <div ref={end} />
-          </div>
-          <div className="composer-wrap">
-            <div
-              className={"composer" + (draggingImage ? " is-dragging" : "")}
-              onDragOver={(e) => {
-                if (e.dataTransfer.types.includes("Files")) {
-                  e.preventDefault();
-                  setDraggingImage(true);
-                }
-              }}
-              onDragLeave={(e) => {
-                if (!e.currentTarget.contains(e.relatedTarget as Node))
-                  setDraggingImage(false);
-              }}
-              onDrop={(e) => {
-                e.preventDefault();
-                setDraggingImage(false);
-                void addImages(Array.from(e.dataTransfer.files));
-              }}
-            >
-              <ImageGallery
-                images={draftImages}
-                onRemove={(imageID) =>
-                  setDraftImages((images) =>
-                    images.filter((image) => image.id !== imageID),
-                  )
-                }
-              />
-              <TextArea
-                aria-label="Send a message"
-                placeholder="Send a message, paste an image, or describe what you want to do…"
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                onPaste={(e) => {
-                  const images = Array.from(e.clipboardData.items)
-                    .filter((item) => item.type.startsWith("image/"))
-                    .map((item) => item.getAsFile())
-                    .filter((file): file is File => !!file);
-                  if (images.length) {
-                    e.preventDefault();
-                    void addImages(images);
-                  }
-                }}
-                onKeyDown={(e) => {
-                  if (
-                    e.key === "Enter" &&
-                    !e.shiftKey &&
-                    !e.nativeEvent.isComposing
-                  ) {
-                    e.preventDefault();
-                    send();
-                  }
-                }}
-                rows={2}
-              />
-              <div className="composer-bottom">
-                <div className="composer-tools">
-                  <input
-                    ref={imageInput}
-                    type="file"
-                    accept="image/png,image/jpeg,image/webp,image/gif"
-                    multiple
-                    hidden
-                    aria-label="Choose images"
-                    onChange={(e) => {
-                      void addImages(Array.from(e.target.files ?? []));
-                      e.target.value = "";
-                    }}
-                  />
-                  <span title="Attach images by selecting, pasting, or dropping them · Up to 4 images, 5 MB each">
-                    <Button
-                      isIconOnly
-                      size="sm"
-                      variant="ghost"
-                      aria-label="Attach images"
-                      isPending={uploadingImages}
-                      isDisabled={sending}
-                      onPress={() => imageInput.current?.click()}
-                    >
-                      <ImagePlus size={18} />
-                    </Button>
-                  </span>
-                  <span>
-                    <span
-                      className={
-                        "dot " +
-                        (current?.sandbox.state === "running" ? "online" : "")
-                      }
-                    />
-                    {draggingImage
-                      ? "Release to attach images"
-                      : uploadingImages
-                        ? "Uploading images…"
-                        : current?.sandbox.state === "running"
-                          ? "Connected to your sandbox"
-                          : "Sandbox starts on demand"}
-                  </span>
-                </div>
-                <div className="row">
-                  {current && current.agent_state !== "idle" && (
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      onPress={() =>
-                        api(`/sessions/${id}/stop`, "POST").catch((e) =>
-                          setError(e.message),
-                        )
-                      }
-                    >
-                      <Square size={12} />
-                      Stop
-                    </Button>
-                  )}
-                  <Button
-                    isIconOnly
-                    aria-label="Send"
-                    variant="primary"
-                    className="send-button"
-                    isDisabled={
-                      (!draft.trim() && !draftImages.length) || uploadingImages
-                    }
-                    isPending={sending}
-                    onPress={send}
-                  >
-                    <ArrowUp size={20} />
-                  </Button>
-                </div>
-              </div>
-            </div>
-            <div className="composer-note">
-              <span>
-                <kbd>Enter</kbd> to send <kbd>Shift + Enter</kbd> for a new line
-              </span>
-              <span>
-                {"Tools run through Wasm PTC"}
-              </span>
-            </div>
-          </div>
-            </>
-          )}
-        </section>
-        <PanelDivider />
-        <TerminalPanel session={current} onError={setError} />
-      </main>
-      <Settings
-        open={settings}
-        onClose={() => setSettings(false)}
-        onError={setError}
-      />
-      <LibraryPreview
-        fileId={preview?.id ?? null}
-        version={preview?.version}
-        onClose={() => setPreview(null)}
-        onError={setError}
-        onOpenLibraryFile={(fileId) => setPreview({ id: fileId })}
-      />
-      <Modal
-        isOpen={!!deleteID}
-        onOpenChange={(v) => {
-          if (!v) setDeleteID("");
-        }}
-      >
-        <Modal.Backdrop>
-          <Modal.Container>
-            <Modal.Dialog>
-              <Modal.CloseTrigger />
-              <Modal.Header>
-                <Modal.Heading>Delete this chat?</Modal.Heading>
-              </Modal.Header>
-              <Modal.Body>
-                <p>This permanently deletes the dedicated sandbox and the entire chat history.</p>
-              </Modal.Body>
-              <Modal.Footer>
-                <Button variant="secondary" onPress={() => setDeleteID("")}>
-                  Cancel
-                </Button>
-                <Button
-                  variant="danger"
-                  onPress={() =>
-                    api(`/sessions/${deleteID}`, "DELETE")
-                      .then(() => {
-                        const remaining = sessions.filter(
-                          (s) => s.id !== deleteID,
-                        );
-                        setSessions(remaining);
-                        setId((selected) =>
-                          selected === deleteID
-                            ? (remaining[0]?.id ?? "")
-                            : selected,
-                        );
-                        setEvents([]);
-                        setOutbox([]);
-                        setDeleteID("");
-                      })
-                      .catch((e) => setError(e.message))
-                  }
-                >
-                  Delete chat
-                </Button>
-              </Modal.Footer>
-            </Modal.Dialog>
-          </Modal.Container>
-        </Modal.Backdrop>
-      </Modal>
-    </div>
+                </Modal.Footer>
+              </Modal.Dialog>
+            </Modal.Container>
+          </Modal.Backdrop>
+        </Modal>
+      </div>
+    </TurnTraceProvider>
   );
 }

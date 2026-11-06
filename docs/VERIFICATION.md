@@ -48,6 +48,16 @@ This record covers runs performed on this macOS machine from 2026-10-31 through 
 | Image boundaries | Database integration tests cover cross-session image reads and references, spoofed formats, invalid/duplicate image IDs, count limits, image-only messages, and image cleanup when deleting a session. |
 | Image recovery after restart | The first turn asked the model to reply only “Received.” After stopping the backend and deleting the test session's local turn cache, the restarted service could still read the image and retained the locked preset. In the second turn, Flash correctly read the previously untranscribed `ORBIT 5938`, confirming that the image was restored from PostgreSQL. |
 
+## Lazy reads — 2026-11-06
+
+Chrome against the production frontend build passed the lazy-history, tool, plan, Settings, and Library fixtures: one initial tail page; upward-only historical reads and stable anchors; nested tool/reasoning/document reads only on expansion; stale-request cancellation; completion catch-up; paged trajectory headers with exact-record reads; active-tab/selected-file loading; and no CSS-hidden mobile Terminal connection. Browser fixtures do not call a model or mutate saved conversations.
+
+A read-only copy of the reported session was loaded into a disposable local PostgreSQL database: 12 turns, 495 native records, and 80,422 frames (34,920,095 bytes of source JSON). One local measurement returned the newest 10 turns in 13,592 bytes / 42.8 ms, with no native events or frames. The original large turn's execution metadata was 6,704 bytes / 112.4 ms; a 100-frame header page was 10,951 bytes / 5.4 ms. These are local measurements, not Render latency guarantees. Runtime write batching was not changed.
+
+The actual Go binary rendered this local session copy in Chrome: one initial page request, one upward-history request, two metadata queries (process/direct-child headers), one exact tool-body query, zero unscoped raw-trace queries, and zero page errors. The expanded source code was visibly rendered. Dedicated PostgreSQL `go test -race ./...`, `go vet ./...`, frontend/service builds, and `npm test` passed. Incremental metadata SSE tests cover visible text accumulation, suppression of hidden argument/reasoning-only updates, settled-message replacement, and unchanged no-query heartbeats.
+
+**Verification incident:** the initial shared-Neon test attempt revealed that its proxy ignored startup `search_path`. The test run unintentionally installed additive migration 012 (indexes/query functions) and triggered ownership handoffs at 07:09:22Z and 07:09:34Z; Render reacquired ownership at 07:09:39Z and health remained on application version `b226d51`. No application deployment was performed. Subsequent database verification moved to a dedicated local PostgreSQL 18 cluster. Both test schema helpers now verify `current_schema()` before any migration/ownership acquisition and refuse a connection whose isolation did not take effect. Do not use the shared Neon DSN for test runs.
+
 ## Rerun Checks
 
 After starting the service, run these in order so crash-recovery tests do not affect other checks:
@@ -63,16 +73,22 @@ node scripts/browser-check.mjs
 node scripts/session-updates-e2e.mjs
 node scripts/plan-e2e.mjs
 node scripts/tool-ui-check.mjs
+node scripts/library-lazy-check.mjs
+node scripts/lazy-history-check.mjs
+node scripts/plan-lazy-check.mjs
+node scripts/settings-lazy-check.mjs
 ```
 
-Preset, model migration, image ownership, Plan review, and PG notification/SSE idle-query and reconnect database integration tests use an isolated temporary schema. They do not call a model or modify existing sessions:
+Preset, model migration, image ownership, Plan review, skill preservation, lazy history/trace queries, and PG notification/SSE idle-query and reconnect integration tests use disposable schemas in a **dedicated local test database**. Test helpers verify effective schema isolation before migration or ownership acquisition. Do not point these checks at the shared application database:
 
 ```sh
 NIMBUS_TEST_DATABASE_URL='postgres://nimbus@127.0.0.1:55432/nimbus?sslmode=disable' make test
 go vet ./...
 ```
 
-`npm test` runs 19 tests. It also verifies that the runtime rejects inconsistent session presets and old model names before loading the Harness, supports large MCP tool catalogs/results beyond the pipe buffer, and preserves tool-tree correlation, replay, exit codes, and pending state. `scripts/plan-e2e.mjs` uses local Chrome, responds only to test sessions it created, and deletes those sessions on exit. `scripts/tool-ui-check.mjs` uses simulated browser events; it does not call a real model or modify existing sessions.
+`npm test` verifies that the runtime rejects inconsistent session presets and old model names before loading the Harness, supports large MCP tool catalogs/results beyond the pipe buffer, and preserves tool-tree correlation, replay, exit codes, and pending state. `scripts/plan-e2e.mjs` uses local Chrome, responds only to test sessions it created, and deletes those sessions on exit. `scripts/tool-ui-check.mjs` uses simulated browser events; it does not call a real model or modify existing sessions.
+
+`scripts/library-lazy-check.mjs` uses deterministic browser-only library fixtures. It checks that closed panels and version selectors do not fetch, bare links resolve only their own metadata with per-ID single-flight requests, previews load only selected content, closing/switching cancels stale reads, and sandboxed HTML remains interactive. It does not call a model or mutate saved library files.
 
 The Go integration tests in `internal/sandbox` selectively enable real E2B with `NIMBUS_TEST_E2B_KEY` and create/delete their own sandboxes. `scripts/terminal-e2e.ts` interrupts Node only when all existing user sessions are idle; it uses local Chrome and cleans up its own session and sandbox.
 

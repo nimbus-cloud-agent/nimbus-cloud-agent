@@ -3,11 +3,13 @@ export async function api<T = unknown>(
   path: string,
   method = "GET",
   body?: unknown,
+  signal?: AbortSignal,
 ): Promise<T> {
   const r = await fetch("/api" + path, {
     method,
     headers: body ? { "Content-Type": "application/json" } : {},
     body: body ? JSON.stringify(body) : undefined,
+    signal,
   });
   if (!r.ok) {
     let error = "Request failed";
@@ -121,12 +123,80 @@ export type StreamFrame = {
     outcome?: { seq?: number };
   };
 };
+export type TurnSummary = {
+  turn_id: string;
+  final_text: string;
+  has_details: boolean;
+  tool_count: number;
+  failed_count: number;
+  duration?: number;
+  plan_review_retry?: { seq: number };
+};
 export type History = {
-  events: Event[];
-  frames: StreamFrame[];
   outbox: Outbox[];
+  turns: TurnSummary[];
   questions: UserQuestion[];
   has_more: boolean;
+  before_turn: string | null;
+};
+export type TurnTrace = {
+  events: Event[];
+  frames: StreamFrame[];
+  questions: UserQuestion[];
+  cursor: { seq: number; frame: number };
+};
+export type ToolHeader = {
+  id: string;
+  name: string;
+  seq: number;
+  parent?: string;
+  time?: number;
+  ended?: number;
+  complete: boolean;
+  failed: boolean;
+  child_count: number;
+  args: Pick<
+    ToolArguments,
+    "description" | "path" | "command" | "query" | "name"
+  >;
+};
+export type TurnMetadata = {
+  tools: ToolHeader[];
+  messages: {
+    seq: number;
+    time?: number;
+    step?: number;
+    turn?: number;
+    text: string;
+    has_reasoning: boolean;
+  }[];
+  attempts: {
+    id: string;
+    step?: number;
+    turn?: number;
+    ended_seq?: number;
+    text: string;
+    has_reasoning: boolean;
+  }[];
+  pending_tools: { id: string; name: string }[];
+  questions: UserQuestion[];
+  outbox: Outbox[];
+  cursor: { seq: number; frame: number };
+};
+export type EventHeader = { seq: number; type: string; time?: number };
+export type FrameHeader = {
+  id: number;
+  type: string;
+  chunk_type?: string;
+  attempt_id?: string;
+  call_id?: string;
+};
+export type TurnHeaders = {
+  events: EventHeader[];
+  frames: FrameHeader[];
+  has_more: boolean;
+  before: number | null;
+  cursor: { seq: number; frame: number };
 };
 export type SettingsData = {
   deepseek_api_key: string;
@@ -161,11 +231,48 @@ export type TerminalMessage = {
 export function decodeJSON<T>(text: string): T {
   return JSON.parse(text) as T;
 }
-export async function history(id: string, after: number): Promise<History> {
-  const wire = await api<Omit<History, "events"> & { events: WireEvent[] }>(
-    `/sessions/${id}/events?after_seq=${after}`,
+export function history(
+  id: string,
+  before?: string,
+  signal?: AbortSignal,
+): Promise<History> {
+  return api<History>(
+    `/sessions/${id}/events?include_question_content=false${before ? `&before_turn=${encodeURIComponent(before)}` : ""}`,
+    "GET",
+    undefined,
+    signal,
+  );
+}
+export async function turnTrace(
+  id: string,
+  turn: string,
+  signal?: AbortSignal,
+  query = "",
+): Promise<TurnTrace> {
+  const wire = await api<Omit<TurnTrace, "events"> & { events: WireEvent[] }>(
+    `/sessions/${id}/turns/${turn}/events${query ? `?${query}` : ""}`,
+    "GET",
+    undefined,
+    signal,
   );
   return { ...wire, events: wire.events.map(decodeEvent) };
+}
+export async function loadPlanReview(
+  id: string,
+  turn: string,
+  seq: number,
+  signal: AbortSignal,
+): Promise<string> {
+  const snapshot = await turnTrace(
+    id,
+    turn,
+    signal,
+    `seq=${seq}&include_question_content=false&include_questions=false&include_outbox=false`,
+  );
+  const plan = snapshot.events.find((event) => event.seq === seq)?.tool?.args
+    .plan;
+  if (!plan) throw Error("The plan review content is unavailable.");
+  return plan;
 }
 export type MessageImage = {
   id: string;
@@ -195,7 +302,7 @@ export type UserQuestion = {
   status: "pending" | "answered" | "dismissed" | "interrupted";
   questions: {
     id: string;
-    question: string;
+    question?: string;
     detail?: string;
     header?: string;
     options?: { label: string; description?: string }[];
@@ -227,12 +334,27 @@ export type LibraryDetail = {
   updated_at: string;
   versions: LibraryVersion[];
 };
-export async function listLibrary(): Promise<LibraryFile[]> {
-  const d = await api<{ files: LibraryFile[] }>("/library");
+export async function listLibrary(
+  signal?: AbortSignal,
+): Promise<LibraryFile[]> {
+  const d = await api<{ files: LibraryFile[] }>(
+    "/library",
+    "GET",
+    undefined,
+    signal,
+  );
   return d.files ?? [];
 }
-export async function getLibraryFile(id: string): Promise<LibraryDetail> {
-  return api<LibraryDetail>(`/library/${id}`);
+export async function getLibraryFile(
+  id: string,
+  options?: { includeVersions?: boolean; signal?: AbortSignal },
+): Promise<LibraryDetail> {
+  return api<LibraryDetail>(
+    `/library/${id}?include_versions=${options?.includeVersions ?? false}`,
+    "GET",
+    undefined,
+    options?.signal,
+  );
 }
 export function libraryContentUrl(id: string, version?: number): string {
   return `/api/library/${id}/content${version != null ? `?version=${version}` : ""}`;

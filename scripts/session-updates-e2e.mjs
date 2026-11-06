@@ -86,7 +86,10 @@ async function completed(sid, count, dismissPlan = false) {
       "completed",
       d.outbox[count - 1].error,
     );
-    return d;
+    const trace = await api(
+      `/sessions/${sid}/turns/${d.outbox[count - 1].turn_id}/events`,
+    );
+    return { ...d, ...trace };
   }, 180000);
 }
 const ids = [],
@@ -133,20 +136,26 @@ try {
     .getByLabel("Choose images")
     .setInputFiles({ name: "fixture.png", mimeType: "image/png", buffer: png });
   await page.locator(".image-drafts img").waitFor();
-  await page.getByRole("button", { name: "Preview image: fixture.png" }).click();
+  await page
+    .getByRole("button", { name: "Preview image: fixture.png" })
+    .click();
   await page.locator(".image-preview").waitFor();
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Remove image: fixture.png" }).click();
   assert.equal(await page.locator(".image-drafts img").count(), 0);
   // Exercise real browser clipboard-file handling, not a direct API substitute.
-  await page.getByRole("textbox", { name: "Send a message" }).evaluate((el, b64) => {
-    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-    const transfer = new DataTransfer();
-    transfer.items.add(new File([bytes], "pasted.png", { type: "image/png" }));
-    el.dispatchEvent(
-      new ClipboardEvent("paste", { bubbles: true, clipboardData: transfer }),
-    );
-  }, png.toString("base64"));
+  await page
+    .getByRole("textbox", { name: "Send a message" })
+    .evaluate((el, b64) => {
+      const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+      const transfer = new DataTransfer();
+      transfer.items.add(
+        new File([bytes], "pasted.png", { type: "image/png" }),
+      );
+      el.dispatchEvent(
+        new ClipboardEvent("paste", { bubbles: true, clipboardData: transfer }),
+      );
+    }, png.toString("base64"));
   await page.locator(".image-drafts img").waitFor();
   console.log("PASS image upload, preview, removal and paste");
 
@@ -168,7 +177,9 @@ try {
   );
   console.log("PASS no browser session-list polling");
   await api(path, { title: "SSE live update verification" }, "PATCH");
-  await page.getByRole("heading", { name: "SSE live update verification" }).waitFor();
+  await page
+    .getByRole("heading", { name: "SSE live update verification" })
+    .waitFor();
   await until(() =>
     list.frames.some((f) =>
       f.data?.some((x) => x.title === "SSE live update verification"),
@@ -178,14 +189,18 @@ try {
   streams.push(reconnect);
   await until(() =>
     reconnect.frames.some((f) =>
-      f.data?.some((x) => x.id === s.id && x.title === "SSE live update verification"),
+      f.data?.some(
+        (x) => x.id === s.id && x.title === "SSE live update verification",
+      ),
     ),
   );
   console.log("PASS list pushes changes and reconnect sends current snapshot");
 
   await page
     .getByRole("textbox", { name: "Send a message" })
-    .fill("Read the letters and numbers in the image. Reply only with that string. Do not use tools.");
+    .fill(
+      "Read the letters and numbers in the image. Reply only with that string. Do not use tools.",
+    );
   await page.getByRole("button", { name: "Send", exact: true }).click();
   let d = await completed(s.id, 1);
   assert.match(
@@ -202,9 +217,7 @@ try {
     ),
   );
   assert.equal((await api(path)).sandbox.state, "not_started");
-  console.log(
-    "PASS Flash reads native image content; no E2B allocation",
-  );
+  console.log("PASS Flash reads native image content; no E2B allocation");
   await page.reload();
   await page.locator(".user-message img").waitFor();
   await page

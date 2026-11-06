@@ -28,11 +28,13 @@ interface Question {
   turn_id: string;
   status: string;
 }
-interface Snapshot {
+interface History {
   outbox: Outbox[];
+  questions: Question[];
+}
+interface Snapshot extends History {
   events: { type: string; payload: unknown }[];
   frames: Frame[];
-  questions: Question[];
 }
 const base = "http://127.0.0.1:8080",
   ids: string[] = [];
@@ -83,14 +85,17 @@ const send = (s: Session, message: string) =>
     message,
     client_msg_id: crypto.randomUUID(),
   });
-const events = (s: Session) => api<Snapshot>(`/sessions/${s.id}/events`);
+const events = (s: Session) => api<History>(`/sessions/${s.id}/events`);
 async function settled(s: Session, o: Outbox, outcome = "completed") {
   return until(async () => {
     const d = await events(s),
       row = d.outbox.find((x) => x.id === o.id);
     if (!row?.outcome) return;
     assert.equal(row.outcome, outcome, row.error);
-    return d;
+    const trace = await api<Omit<Snapshot, "outbox">>(
+      `/sessions/${s.id}/turns/${o.turn_id}/events`,
+    );
+    return { ...d, ...trace };
   }, "turn completion");
 }
 async function pending(s: Session, o: Outbox) {
@@ -183,7 +188,10 @@ try {
   await pending(b, reviewTurn);
   const second = await settled(
     a,
-    await send(a, "What marker did I ask you to remember last turn? Reply with only the marker. Do not use tools."),
+    await send(
+      a,
+      "What marker did I ask you to remember last turn? Reply with only the marker. Do not use tools.",
+    ),
   );
   assert.ok(
     second.events.some(
@@ -215,10 +223,13 @@ try {
   );
   const before = await until(async () => {
     const d = await events(a);
-    return d.frames.some(
+    const trace = await api<Omit<Snapshot, "outbox">>(
+      `/sessions/${a.id}/turns/${generating.turn_id}/events`,
+    );
+    return trace.frames.some(
       (f) => f.turn_id === generating.turn_id && f.payload?.chunk?.text,
     )
-      ? d
+      ? { ...d, ...trace }
       : null;
   }, "partial output");
   const partial = before.frames.filter((f) => f.turn_id === generating.turn_id);
@@ -247,7 +258,10 @@ try {
     "PASS active Node SIGKILL: automatic restart, interrupted turns/review, durable partial output, new turn recovery",
   );
   const idle = await killRuntime();
-  await settled(a, await send(a, "Reply only with IDLE_RESTART_OK. Do not use tools."));
+  await settled(
+    a,
+    await send(a, "Reply only with IDLE_RESTART_OK. Do not use tools."),
+  );
   assert.equal((await health()).pid, idle.pid);
   console.log("PASS idle Node SIGKILL restarts without a new request");
   await api(

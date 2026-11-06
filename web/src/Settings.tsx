@@ -24,7 +24,7 @@ type Skill = {
   name: string;
   description: string;
   enabled: boolean;
-  files: { path: string; content: string }[];
+  files: { path: string; content?: string }[];
 };
 const blank = (): Skill => ({
   name: "",
@@ -57,28 +57,106 @@ export default function Settings({
     [busy, setBusy] = useState(false),
     [notice, setNotice] = useState(""),
     [failure, setFailure] = useState("");
-  async function load() {
-    try {
-      const [s, k, m] = await Promise.all([
-        api<SettingsData>("/settings"),
-        api<Skill[]>("/skills"),
-        api<MCPServer[]>("/mcp/servers"),
-      ]);
-      setTemplate(s.e2b_template);
-      setConfigured(!!s.deepseek_api_key);
-      setSkills(k);
-      setMcps(m);
-    } catch (e) {
-      setFailure(String(e));
-    }
-  }
+  const [revision, setRevision] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [fileAttempt, setFileAttempt] = useState(0);
+  const [fileError, setFileError] = useState("");
   useEffect(() => {
-    if (open) {
-      load();
-      setFailure("");
-      setNotice("");
+    setNotice("");
+  }, [open, tab]);
+  useEffect(() => {
+    if (!open) return;
+    const controller = new AbortController();
+    setFailure("");
+    setLoading(true);
+    async function load() {
+      try {
+        if (tab === "model") {
+          const data = await api<SettingsData>(
+            "/settings",
+            "GET",
+            undefined,
+            controller.signal,
+          );
+          setTemplate(data.e2b_template);
+          setConfigured(!!data.deepseek_api_key);
+        } else if (tab === "skills") {
+          setSkills(
+            await api<Skill[]>(
+              "/skills?include_content=false",
+              "GET",
+              undefined,
+              controller.signal,
+            ),
+          );
+        } else {
+          setMcps(
+            await api<MCPServer[]>(
+              "/mcp/servers",
+              "GET",
+              undefined,
+              controller.signal,
+            ),
+          );
+        }
+      } catch (e) {
+        if (!controller.signal.aborted) setFailure(String(e));
+      } finally {
+        if (!controller.signal.aborted) setLoading(false);
+      }
     }
-  }, [open]);
+    void load();
+    return () => controller.abort();
+  }, [open, tab, revision]);
+  const selectedFile = edit?.files[file];
+  useEffect(() => {
+    setFileError("");
+    if (
+      !open ||
+      loading ||
+      tab !== "skills" ||
+      !edit?.id ||
+      !selectedFile ||
+      selectedFile.content !== undefined
+    )
+      return;
+    const controller = new AbortController();
+    const skillID = edit.id,
+      path = selectedFile.path;
+    api<{ path: string; content: string }>(
+      `/skills/${skillID}/files?path=${encodeURIComponent(path)}`,
+      "GET",
+      undefined,
+      controller.signal,
+    )
+      .then((data) => {
+        if (controller.signal.aborted) return;
+        setEdit((current) =>
+          current?.id === skillID
+            ? {
+                ...current,
+                files: current.files.map((entry) =>
+                  entry.path === path && entry.content === undefined
+                    ? { ...entry, content: data.content }
+                    : entry,
+                ),
+              }
+            : current,
+        );
+      })
+      .catch((e: Error) => {
+        if (!controller.signal.aborted) setFileError(e.message);
+      });
+    return () => controller.abort();
+  }, [
+    open,
+    loading,
+    tab,
+    edit?.id,
+    selectedFile?.path,
+    selectedFile?.content,
+    fileAttempt,
+  ]);
   async function run(
     fn: () => Promise<unknown>,
     message = "Saved. Changes take effect in the next conversation.",
@@ -88,7 +166,7 @@ export default function Settings({
     setNotice("");
     try {
       const result = await fn();
-      await load();
+      setRevision((value) => value + 1);
       setNotice(typeof result === "string" ? result : message);
     } catch (e) {
       setFailure(String(e));
@@ -104,14 +182,16 @@ export default function Settings({
         if (f.size > 5242880) throw Error(`${f.name} exceeds 5 MB.`);
         const bytes = await f.arrayBuffer();
         const content = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-        if (content.includes("\0")) throw Error(`${f.name} is not a text file.`);
+        if (content.includes("\0"))
+          throw Error(`${f.name} is not a text file.`);
         files.push({ path: f.webkitRelativePath || f.name, content });
       }
       const merged = [
-        ...edit.files.filter((f) => f.content || f.path !== "SKILL.md"),
+        ...edit.files.filter((f) => f.content !== "" || f.path !== "SKILL.md"),
         ...files,
       ];
-      if (merged.length > 100) throw Error("Each skill can contain up to 100 files.");
+      if (merged.length > 100)
+        throw Error("Each skill can contain up to 100 files.");
       setEdit({ ...edit, files: merged });
       setFile(0);
     } catch (e) {
@@ -132,7 +212,8 @@ export default function Settings({
             <Modal.Header>
               <Modal.Heading>Settings</Modal.Heading>
               <p className="muted">
-                Configure your cloud workspace. Changes take effect in the next turn.
+                Configure your cloud workspace. Changes take effect in the next
+                turn.
               </p>
             </Modal.Header>
             <Modal.Body>
@@ -146,7 +227,10 @@ export default function Settings({
                     key={String(id)}
                     variant={tab === id ? "secondary" : "ghost"}
                     onPress={() => {
-                      setTab(String(id));
+                      if (tab !== String(id)) {
+                        setLoading(true);
+                        setTab(String(id));
+                      }
                       setNotice("");
                       setFailure("");
                     }}
@@ -161,13 +245,23 @@ export default function Settings({
                   {failure}
                 </div>
               )}
+              {failure && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onPress={() => setRevision((value) => value + 1)}
+                >
+                  Retry loading settings
+                </Button>
+              )}
+              {loading && <p role="status">Loading settings…</p>}
               {notice && (
                 <div className="form-success" role="status">
                   <Check size={15} />
                   {notice}
                 </div>
               )}
-              {tab === "model" && (
+              {tab === "model" && !loading && (
                 <div className="settings-section">
                   <h3>
                     <KeyRound size={17} />
@@ -186,12 +280,15 @@ export default function Settings({
                     type="password"
                     value={key}
                     placeholder={
-                      configured ? "Saved securely · Enter a new key to replace it" : "sk-…"
+                      configured
+                        ? "Saved securely · Enter a new key to replace it"
+                        : "sk-…"
                     }
                     onChange={(e) => setKey(e.target.value)}
                   />
                   <p className="muted">
-                    Keys are stored on the server. Their full values are never sent to this page.
+                    Keys are stored on the server. Their full values are never
+                    sent to this page.
                   </p>
                   <h3>
                     <Cloud size={17} />
@@ -204,7 +301,8 @@ export default function Settings({
                     onChange={(e) => setTemplate(e.target.value)}
                   />
                   <p className="muted">
-                    Applies only to new sandboxes. Existing sandboxes keep their current environment.
+                    Applies only to new sandboxes. Existing sandboxes keep their
+                    current environment.
                   </p>
                   <div className="settings-facts">
                     <span>
@@ -237,7 +335,7 @@ export default function Settings({
                   </Button>
                 </div>
               )}
-              {tab === "skills" && (
+              {tab === "skills" && !loading && (
                 <div className="settings-section">
                   <div className="row between">
                     <h3>Your skills</h3>
@@ -254,11 +352,14 @@ export default function Settings({
                     </Button>
                   </div>
                   <p className="muted">
-                    Skills are stored in the database and loaded by the agent when needed. Each skill can contain up to 100 text files, with a 5 MB limit per file.
+                    Skills are stored in the database and loaded by the agent
+                    when needed. Each skill can contain up to 100 text files,
+                    with a 5 MB limit per file.
                   </p>
-                  {skills.length === 0 && !edit && (
+                  {!loading && skills.length === 0 && !edit && (
                     <p className="settings-empty">
-                      No skills yet. Add reusable workflows to help the agent with your tasks.
+                      No skills yet. Add reusable workflows to help the agent
+                      with your tasks.
                     </p>
                   )}
                   {skills.map((s) => (
@@ -266,7 +367,8 @@ export default function Settings({
                       <div>
                         <strong>{s.name}</strong>
                         <small>
-                          {s.files.length} files · {s.description || "No description"}
+                          {s.files.length} files ·{" "}
+                          {s.description || "No description"}
                         </small>
                       </div>
                       <div className="row">
@@ -275,10 +377,7 @@ export default function Settings({
                           value={s.enabled}
                           onChange={(v) =>
                             run(() =>
-                              api("/skills/" + s.id, "PUT", {
-                                ...s,
-                                enabled: v,
-                              }),
+                              api("/skills/" + s.id, "PATCH", { enabled: v }),
                             )
                           }
                         />
@@ -336,7 +435,9 @@ export default function Settings({
                           variant="ghost"
                           onPress={() => {
                             if (edit.files.length >= 100) {
-                              setFailure("A skill can contain up to 100 files.");
+                              setFailure(
+                                "A skill can contain up to 100 files.",
+                              );
                               return;
                             }
                             setEdit({
@@ -378,6 +479,7 @@ export default function Settings({
                         <>
                           <Input
                             aria-label="File path"
+                            disabled={edit.files[file].content === undefined}
                             value={edit.files[file].path}
                             onChange={(e) =>
                               setEdit({
@@ -390,10 +492,27 @@ export default function Settings({
                               })
                             }
                           />
+                          {edit.files[file].content === undefined && (
+                            <div role="status">
+                              {fileError || "Loading file…"}
+                              {fileError && (
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  onPress={() =>
+                                    setFileAttempt((value) => value + 1)
+                                  }
+                                >
+                                  Retry loading file
+                                </Button>
+                              )}
+                            </div>
+                          )}
                           <TextArea
                             aria-label="Skill file contents"
                             rows={10}
-                            value={edit.files[file].content}
+                            value={edit.files[file].content ?? ""}
+                            disabled={edit.files[file].content === undefined}
                             onChange={(e) =>
                               setEdit({
                                 ...edit,
@@ -415,7 +534,7 @@ export default function Settings({
                             run(async () => {
                               await api(
                                 "/skills" + (edit.id ? "/" + edit.id : ""),
-                                edit.id ? "PUT" : "POST",
+                                edit.id ? "PATCH" : "POST",
                                 edit,
                               );
                               setEdit(null);
@@ -447,7 +566,7 @@ export default function Settings({
                   )}
                 </div>
               )}
-              {tab === "mcp" && (
+              {tab === "mcp" && !loading && (
                 <div className="settings-section">
                   <div className="row between">
                     <h3>Connect external tools</h3>
@@ -463,8 +582,11 @@ export default function Settings({
                     </Button>
                   </div>
                   <p className="muted">
-                    Streamable HTTP only. Services that require sign-in use OAuth; credentials are stored and refreshed by the server.
-                    “Authorized” means sign-in credentials are saved. Select “Test” to check whether the tools are available. Connection changes take effect in the next conversation.
+                    Streamable HTTP only. Services that require sign-in use
+                    OAuth; credentials are stored and refreshed by the server.
+                    “Authorized” means sign-in credentials are saved. Select
+                    “Test” to check whether the tools are available. Connection
+                    changes take effect in the next conversation.
                   </p>
                   {mcps.length === 0 && !mcpEdit && (
                     <p className="settings-empty">
@@ -607,7 +729,9 @@ export default function Settings({
               )}
             </Modal.Body>
             <Modal.Footer>
-              <span className="muted">Single-user workspace · You are the admin</span>
+              <span className="muted">
+                Single-user workspace · You are the admin
+              </span>
               <Button variant="secondary" onPress={onClose}>
                 Done
               </Button>

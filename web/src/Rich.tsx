@@ -1,31 +1,54 @@
 import { useEffect, useState, type ReactNode } from "react";
 import Markdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { listLibrary } from "./api";
+import { getLibraryFile } from "./api";
 
 const LIBRARY_URL_RE =
   /nimbus:\/\/library\/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/g;
 const LIBRARY_HREF_RE =
   /^nimbus:\/\/library\/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$/;
 
-// Shared, lazily fetched id -> file name map, so many library links in one
-// conversation trigger a single list request and never block rendering.
-let nameCache: Map<string, string> | null = null;
-let namePromise: Promise<Map<string, string>> | null = null;
-function libraryNames(): Promise<Map<string, string>> {
-  if (nameCache) return Promise.resolve(nameCache);
-  if (!namePromise) {
-    namePromise = listLibrary()
-      .then((files) => {
-        nameCache = new Map(files.map((f) => [f.id, f.name]));
-        return nameCache;
-      })
-      .catch(() => {
-        namePromise = null;
-        return new Map<string, string>();
-      });
+// Only visible bare links resolve their own metadata. Concurrent instances of
+// the same link share one request, cancelled when its last consumer unmounts.
+type LibraryNameRequest = {
+  name?: string;
+  promise: Promise<string>;
+  controller: AbortController;
+  users: number;
+};
+const libraryNames = new Map<string, LibraryNameRequest>();
+function acquireLibraryName(id: string) {
+  let request = libraryNames.get(id);
+  if (!request) {
+    const controller = new AbortController();
+    const entry: LibraryNameRequest = {
+      controller,
+      users: 0,
+      promise: getLibraryFile(id, { signal: controller.signal })
+        .then((file) => {
+          entry.name = file.name;
+          return file.name;
+        })
+        .catch((error: unknown) => {
+          if (libraryNames.get(id) === entry) libraryNames.delete(id);
+          throw error;
+        }),
+    };
+    request = entry;
+    libraryNames.set(id, request);
   }
-  return namePromise;
+  request.users++;
+  const current = request;
+  return {
+    promise: current.promise,
+    release: () => {
+      current.users--;
+      if (current.users === 0 && current.name === undefined) {
+        if (libraryNames.get(id) === current) libraryNames.delete(id);
+        current.controller.abort();
+      }
+    },
+  };
 }
 
 function LibraryLink({
@@ -46,13 +69,20 @@ function LibraryLink({
         : "";
   const isBareUrl = text === `nimbus://library/${id}` || text === "";
   useEffect(() => {
+    setName(null);
     if (!isBareUrl || !onOpenLibraryFile) return;
     let active = true;
-    libraryNames().then((names) => {
-      if (active) setName(names.get(id) ?? null);
-    });
+    const request = acquireLibraryName(id);
+    request.promise
+      .then((name) => {
+        if (active) setName(name);
+      })
+      .catch(() => {
+        // Keep the safe original link label when metadata is unavailable.
+      });
     return () => {
       active = false;
+      request.release();
     };
   }, [id, isBareUrl, onOpenLibraryFile]);
   const label = isBareUrl ? (name ?? `nimbus://library/${id}`) : text;
@@ -108,10 +138,7 @@ export default function Rich({
             const m = href ? LIBRARY_HREF_RE.exec(href) : null;
             if (m) {
               return (
-                <LibraryLink
-                  id={m[1]}
-                  onOpenLibraryFile={onOpenLibraryFile}
-                >
+                <LibraryLink id={m[1]} onOpenLibraryFile={onOpenLibraryFile}>
                   {linkChildren}
                 </LibraryLink>
               );

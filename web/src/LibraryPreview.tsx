@@ -5,6 +5,7 @@ import {
   getLibraryFile,
   libraryContentUrl,
   type LibraryDetail,
+  type LibraryVersion,
 } from "./api";
 import { Picker } from "./components";
 import Rich from "./Rich";
@@ -37,32 +38,48 @@ function isMarkdown(file: LibraryDetail): boolean {
   );
 }
 
-export default function LibraryPreview({
-  fileId,
-  version,
-  onClose,
-  onError,
-  onOpenLibraryFile,
-}: {
+type LibraryPreviewProps = {
   fileId: string | null;
   version?: number;
   onClose: () => void;
   onError: (s: string) => void;
   onOpenLibraryFile?: (id: string, version?: number) => void;
-}) {
+};
+
+export default function LibraryPreview(props: LibraryPreviewProps) {
+  // Unmount hidden previews, including markdown and native iframe/image reads.
+  if (!props.fileId) return null;
+  return (
+    <OpenLibraryPreview
+      key={`${props.fileId}:${props.version ?? "current"}`}
+      {...props}
+      fileId={props.fileId}
+    />
+  );
+}
+
+function OpenLibraryPreview({
+  fileId,
+  version,
+  onClose,
+  onError,
+  onOpenLibraryFile,
+}: LibraryPreviewProps & { fileId: string }) {
   const [detail, setDetail] = useState<LibraryDetail | null>(null);
   const [selectedVersion, setSelectedVersion] = useState<number | null>(null);
-  const [markdown, setMarkdown] = useState("");
+  const [markdownContent, setMarkdownContent] = useState<{
+    version: number;
+    text: string;
+  } | null>(null);
   const [loading, setLoading] = useState(false);
+  const [versions, setVersions] = useState<LibraryVersion[] | null>(null);
+  const [selectorOpen, setSelectorOpen] = useState(false);
 
   useEffect(() => {
-    setDetail(null);
-    setSelectedVersion(null);
-    setMarkdown("");
-    if (!fileId) return;
+    const controller = new AbortController();
     let active = true;
     setLoading(true);
-    getLibraryFile(fileId)
+    getLibraryFile(fileId, { signal: controller.signal })
       .then((d) => {
         if (active) setDetail(d);
       })
@@ -77,6 +94,7 @@ export default function LibraryPreview({
       });
     return () => {
       active = false;
+      controller.abort();
     };
     // onClose/onError are stable App setters; only reload when the file changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -85,23 +103,49 @@ export default function LibraryPreview({
   const effectiveVersion =
     selectedVersion ?? version ?? detail?.version ?? undefined;
   const url = fileId ? libraryContentUrl(fileId, effectiveVersion) : "";
+  const markdown =
+    markdownContent && markdownContent.version === effectiveVersion
+      ? markdownContent.text
+      : "";
+
+  useEffect(() => {
+    if (!selectorOpen || !detail || versions !== null) return;
+    const controller = new AbortController();
+    let active = true;
+    getLibraryFile(fileId, { includeVersions: true, signal: controller.signal })
+      .then((file) => {
+        if (active) setVersions(file.versions);
+      })
+      .catch((error: Error) => {
+        if (active) onError(error.message);
+      });
+    return () => {
+      active = false;
+      controller.abort();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectorOpen, detail, fileId, versions]);
 
   useEffect(() => {
     if (!detail || !fileId || !isMarkdown(detail) || !effectiveVersion) return;
+    const controller = new AbortController();
     let active = true;
-    fetch(libraryContentUrl(fileId, effectiveVersion))
+    fetch(libraryContentUrl(fileId, effectiveVersion), {
+      signal: controller.signal,
+    })
       .then((r) => {
         if (!r.ok) throw Error(r.statusText || "Failed to load file");
         return r.text();
       })
       .then((t) => {
-        if (active) setMarkdown(t);
+        if (active) setMarkdownContent({ version: effectiveVersion, text: t });
       })
       .catch((e: Error) => {
         if (active) onError(e.message);
       });
     return () => {
       active = false;
+      controller.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detail, fileId, effectiveVersion]);
@@ -129,11 +173,21 @@ export default function LibraryPreview({
               {detail && (
                 <>
                   <div className="library-preview-meta">
-                    {detail.versions.length > 1 ? (
+                    {detail.version > 1 ? (
                       <Picker
                         label="Version"
                         value={String(effectiveVersion ?? detail.version)}
-                        values={[...detail.versions]
+                        onOpenChange={setSelectorOpen}
+                        values={[
+                          ...(versions ?? [
+                            {
+                              version: effectiveVersion ?? detail.version,
+                              created_at: detail.updated_at,
+                              size_bytes: detail.size_bytes,
+                              sha256: "",
+                            },
+                          ]),
+                        ]
                           .sort((a, b) => b.version - a.version)
                           .map((v) => [
                             String(v.version),
@@ -173,8 +227,8 @@ export default function LibraryPreview({
                   ) : (
                     <div className="library-preview-fallback">
                       <p className="muted">
-                        No preview is available for this file type. Download
-                        it to view it.
+                        No preview is available for this file type. Download it
+                        to view it.
                       </p>
                       <dl className="library-meta">
                         <div>

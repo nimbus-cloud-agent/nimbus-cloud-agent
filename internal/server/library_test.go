@@ -130,8 +130,15 @@ func TestLibraryHTTPListDetailContent(t *testing.T) {
 		t.Fatalf("detail: %d %s", code, body)
 	}
 	var detail libraryDetailView
-	if err := json.Unmarshal(body, &detail); err != nil || detail.Name != "page.html" || detail.Version != 1 || detail.SizeBytes != int64(len(content)) || len(detail.Versions) != 1 || detail.Versions[0].SHA256 != version.SHA256 {
+	if err := json.Unmarshal(body, &detail); err != nil || detail.Name != "page.html" || detail.Version != 1 || detail.SizeBytes != int64(len(content)) || detail.Versions == nil || len(detail.Versions) != 0 {
 		t.Fatalf("detail body: %s, %v", body, err)
+	}
+	code, body, _ = libraryRequest(r, "GET", "/library/"+file.ID+"?include_versions=true")
+	if code != 200 {
+		t.Fatalf("version history: %d %s", code, body)
+	}
+	if err := json.Unmarshal(body, &detail); err != nil || len(detail.Versions) != 1 || detail.Versions[0].SHA256 != version.SHA256 {
+		t.Fatalf("version history body: %s, %v", body, err)
 	}
 	code, body, headers := libraryRequest(r, "GET", "/library/"+file.ID+"/content")
 	if code != 200 || string(body) != content || headers["Content-Type"] != "text/html" || headers["Content-Disposition"] != "inline" || headers["Content-Security-Policy"] != "sandbox allow-scripts" {
@@ -161,6 +168,40 @@ func TestLibraryHTTPListDetailContent(t *testing.T) {
 				t.Fatal("markdown content got a CSP sandbox header")
 			}
 		}
+	}
+}
+
+func TestLibraryHTTPVersionProjection(t *testing.T) {
+	db := optionsDB(t)
+	r := optionsRouter(db)
+	ctx := context.Background()
+	file, _, err := db.WriteLibraryFile(ctx, "history.md", "", strings.NewReader("first version"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := db.WriteLibraryFile(ctx, "history.md", "", strings.NewReader("second version")); err != nil {
+		t.Fatal(err)
+	}
+	for _, query := range []string{"", "?include_versions=false"} {
+		code, body, _ := libraryRequest(r, "GET", "/library/"+file.ID+query)
+		var detail libraryDetailView
+		if err := json.Unmarshal(body, &detail); err != nil || code != 200 || detail.Version != 2 || detail.SizeBytes != int64(len("second version")) || detail.Versions == nil || len(detail.Versions) != 0 {
+			t.Fatalf("metadata %q: code %d, body %s, error %v", query, code, body, err)
+		}
+	}
+	code, body, _ := libraryRequest(r, "GET", "/library/"+file.ID+"?include_versions=true")
+	var detail libraryDetailView
+	if err := json.Unmarshal(body, &detail); err != nil || code != 200 || detail.Version != 2 || len(detail.Versions) != 2 || detail.Versions[0].Version != 1 || detail.Versions[1].Version != 2 {
+		t.Fatalf("history: code %d, body %s, error %v", code, body, err)
+	}
+	for version, content := range map[string]string{"1": "first version", "2": "second version"} {
+		code, body, _ := libraryRequest(r, "GET", "/library/"+file.ID+"/content?version="+version)
+		if code != 200 || string(body) != content {
+			t.Fatalf("content version %s: code %d, body %s", version, code, body)
+		}
+	}
+	if code, _, _ := libraryRequest(r, "GET", "/library/"+file.ID+"?include_versions=invalid"); code != 400 {
+		t.Fatalf("invalid history projection: code %d", code)
 	}
 }
 

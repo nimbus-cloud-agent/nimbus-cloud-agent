@@ -28,7 +28,8 @@ const duplicate = await Promise.all(
 assert.equal(new Set(duplicate.map((o) => o.id)).size, 1);
 console.log("PASS idempotent concurrent delivery");
 await api(`/sessions/${s.id}/messages`, {
-  message: "What did I ask you to reply with in the previous message? Answer briefly. Do not use tools.",
+  message:
+    "What did I ask you to reply with in the previous message? Answer briefly. Do not use tools.",
   client_msg_id: crypto.randomUUID(),
 });
 let d;
@@ -39,8 +40,14 @@ for (let i = 0; i < 120; i++) {
 }
 assert.equal(d.outbox.length, 2);
 assert.ok(d.outbox.every((x) => x.outcome === "completed"));
-assert.equal(d.events.filter((e) => e.type === "user/message").length, 2);
-assert.ok(d.events.every((e, i) => e.seq === i));
+const traces = await Promise.all(
+  d.outbox.map((row) => api(`/sessions/${s.id}/turns/${row.turn_id}/events`)),
+);
+const records = traces
+  .flatMap((trace) => trace.events)
+  .sort((a, b) => a.seq - b.seq);
+assert.equal(records.filter((e) => e.type === "user/message").length, 2);
+assert.ok(records.every((e, i) => e.seq === records[0].seq + i));
 console.log("PASS queued turns preserve contiguous history");
 assert.equal(
   (

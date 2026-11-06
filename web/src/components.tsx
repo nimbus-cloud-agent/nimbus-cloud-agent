@@ -5,6 +5,7 @@ export function Picker({
   value,
   values,
   onChange,
+  onOpenChange,
   icon,
   disabled = false,
   description,
@@ -13,6 +14,7 @@ export function Picker({
   value: string;
   values: [string, string][];
   onChange: (v: string) => void;
+  onOpenChange?: (open: boolean) => void;
   icon?: ReactNode;
   disabled?: boolean;
   description?: string;
@@ -22,6 +24,7 @@ export function Picker({
       aria-label={label}
       aria-description={description}
       isDisabled={disabled}
+      onOpenChange={onOpenChange}
       value={value}
       onChange={(v) => onChange(String(v))}
     >

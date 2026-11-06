@@ -116,10 +116,32 @@ type SessionView struct {
 	LastActiveAt time.Time   `json:"last_active_at"`
 	Sandbox      SandboxView `json:"sandbox"`
 }
+type PlanReviewRetry struct {
+	Seq int64 `json:"seq"`
+}
+type TurnSummary struct {
+	TurnID          string           `json:"turn_id"`
+	FinalText       string           `json:"final_text"`
+	HasDetails      bool             `json:"has_details"`
+	ToolCount       int              `json:"tool_count"`
+	FailedCount     int              `json:"failed_count"`
+	Duration        *float64         `json:"duration,omitempty"`
+	PlanReviewRetry *PlanReviewRetry `json:"plan_review_retry,omitempty"`
+}
 type History struct {
+	Outbox     []Outbox       `json:"outbox"`
+	Turns      []TurnSummary  `json:"turns"`
+	Questions  []UserQuestion `json:"questions"`
+	HasMore    bool           `json:"has_more"`
+	BeforeTurn *string        `json:"before_turn"`
+}
+type TraceCursor struct {
+	Seq   int64 `json:"seq"`
+	Frame int64 `json:"frame"`
+}
+type TurnTrace struct {
 	Events    []Event        `json:"events"`
-	Outbox    []Outbox       `json:"outbox"`
 	Frames    []StreamFrame  `json:"frames"`
 	Questions []UserQuestion `json:"questions"`
-	HasMore   bool           `json:"has_more"`
+	Cursor    TraceCursor    `json:"cursor"`
 }

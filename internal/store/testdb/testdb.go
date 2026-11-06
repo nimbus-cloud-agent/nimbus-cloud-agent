@@ -50,6 +50,21 @@ func OpenWithProbe(t *testing.T) (*store.Store, *Probe) {
 	query.Set("search_path", schema)
 	query.Set("application_name", schema)
 	u.RawQuery = query.Encode()
+	// Some managed proxies ignore startup search_path. Refuse to acquire an
+	// ownership lock or run migrations unless isolation actually took effect.
+	preflight, err := sql.Open("pgx", u.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var actualSchema string
+	err = preflight.QueryRowContext(context.Background(), "SELECT current_schema()").Scan(&actualSchema)
+	_ = preflight.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if actualSchema != schema {
+		t.Fatalf("test schema isolation failed: expected %s, got %s; refusing migrations", schema, actualSchema)
+	}
 	db, err := store.Open(u.String())
 	if err != nil {
 		t.Fatal(err)

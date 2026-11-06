@@ -51,7 +51,8 @@ let done;
 for (let i = 0; i < 90; i++) {
   const d = await api(`/sessions/${s.id}/events`);
   if (d.outbox.find((x) => x.id === o.id)?.outcome) {
-    done = d;
+    const trace = await api(`/sessions/${s.id}/turns/${o.turn_id}/events`);
+    done = { ...d, ...trace };
     break;
   }
   await new Promise((r) => setTimeout(r, 1000));

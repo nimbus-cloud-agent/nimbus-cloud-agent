@@ -287,11 +287,6 @@ func (s *Store) Questions(ctx context.Context, sid string) ([]UserQuestion, erro
 	err := s.db.WithContext(ctx).Where("session_id=?", sid).Order("created_at,id").Find(&rows).Error
 	return rows, dbError(err)
 }
-func (s *Store) Question(ctx context.Context, id string) (UserQuestion, error) {
-	var row UserQuestion
-	err := s.db.WithContext(ctx).First(&row, "id=?", id).Error
-	return row, dbError(err)
-}
 func (s *Store) LockQuestion(ctx context.Context, sid, id string) (UserQuestion, error) {
 	var row UserQuestion
 	err := s.db.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).First(&row, "id=? AND session_id=?", id, sid).Error

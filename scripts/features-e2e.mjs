@@ -25,7 +25,8 @@ async function done(s, o) {
     const row = d.outbox.find((x) => x.id === o.id);
     if (row?.outcome) {
       assert.equal(row.outcome, "completed", row.error);
-      return d;
+      const trace = await api(`/sessions/${s.id}/turns/${o.turn_id}/events`);
+      return { ...d, ...trace };
     }
     await delay(1000);
   }
@@ -169,7 +170,7 @@ const long = await send(
 );
 let visible = false;
 for (let i = 0; i < 90; i++) {
-  const d = await api(`/sessions/${s.id}/events`);
+  const d = await api(`/sessions/${s.id}/turns/${long.turn_id}/events`);
   if (
     d.frames.filter(
       (f) =>

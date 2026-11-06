@@ -54,7 +54,12 @@ export default function TerminalPanel({
     } catch {}
   }, [fontSize]);
   useEffect(() => {
-    if (!session || state !== "running" || !el.current) {
+    if (
+      !session ||
+      state !== "running" ||
+      !el.current ||
+      !el.current.getClientRects().length
+    ) {
       if (state !== "running") pauseRequested.current = false;
       return;
     }
@@ -121,7 +126,9 @@ export default function TerminalPanel({
     ws.onclose = () => {
       setConnection("disconnected");
       if (!pauseRequested.current)
-        term.writeln("\r\n\x1b[90mConnection closed. Select reconnect to try again.\x1b[0m");
+        term.writeln(
+          "\r\n\x1b[90mConnection closed. Select reconnect to try again.\x1b[0m",
+        );
     };
     const input = term.onData((data) => {
       if (ws.readyState === 1) {

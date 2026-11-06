@@ -192,7 +192,11 @@ func TestOneInvalidationDrainsAllEventAndFramePages(t *testing.T) {
 	s, _, url := newStreamServer(t)
 	session := createStreamSession(t, s)
 	out := createStreamOutbox(t, s, session)
-	selected := openStream(t, url+"/api/sessions/"+session.ID+"/stream", "")
+	if err := s.S.UpdateOutbox(context.Background(), out.ID, store.OutboxChanges{Status: ptr("delivered"), DeliveredSeq: ptr(int64(0))}); err != nil {
+		t.Fatal(err)
+	}
+	detailURL := url + "/api/sessions/" + session.ID + "/turns/" + out.TurnID + "/stream"
+	selected := openStream(t, detailURL, "")
 	selected.await(t, "questions", nil)
 	const count = streamPageSize + 5
 	ctx := context.Background()
@@ -211,27 +215,59 @@ func TestOneInvalidationDrainsAllEventAndFramePages(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	for i := range count {
-		event := selected.await(t, "session", nil)
-		if event.id != strconv.Itoa(i) {
-			t.Fatalf("event cursor gap: got %s want %d", event.id, i)
-		}
-	}
-	for i := range count {
-		event := selected.await(t, "frame", nil)
-		var frame model.StreamFrame
-		if err := json.Unmarshal([]byte(event.data), &frame); err != nil {
-			t.Fatal(err)
-		}
-		if frame.Payload.Text != strconv.Itoa(i) {
-			t.Fatalf("frame gap: got %s want %d", frame.Payload.Text, i)
+	eventCount, frameCount := 0, 0
+	lastSeq, lastFrameID := int64(-1), int64(0)
+	for eventCount < count || frameCount < count {
+		select {
+		case event := <-selected.events:
+			switch event.kind {
+			case "session":
+				var record model.Event
+				if err := json.Unmarshal([]byte(event.data), &record); err != nil {
+					t.Fatal(err)
+				}
+				if record.Seq != int64(eventCount) {
+					t.Fatalf("native sequence gap: got %d want %d", record.Seq, eventCount)
+				}
+				lastSeq = record.Seq
+				eventCount++
+			case "frame":
+				var frame model.StreamFrame
+				if err := json.Unmarshal([]byte(event.data), &frame); err != nil {
+					t.Fatal(err)
+				}
+				if frame.Payload.Text != strconv.Itoa(frameCount) {
+					t.Fatalf("frame gap: got %s want %d", frame.Payload.Text, frameCount)
+				}
+				lastFrameID = frame.ID
+				frameCount++
+			default:
+				continue
+			}
+			if event.id != fmt.Sprintf("%d:%d", lastSeq, lastFrameID) {
+				t.Fatalf("composite cursor does not match consumed records: %s", event.id)
+			}
+		case <-time.After(7 * time.Second):
+			t.Fatalf("incomplete stream: %d events, %d frames", eventCount, frameCount)
 		}
 	}
 	selected.cancel()
-	reconnected := openStream(t, url+"/api/sessions/"+session.ID+"/stream", fmt.Sprint(count-3))
-	for i := count - 2; i < count; i++ {
-		if got := reconnected.await(t, "session", nil); got.id != strconv.Itoa(i) {
-			t.Fatal(got)
+	reconnected := openStream(t, detailURL+"?after_seq=-1&after_frame=0", fmt.Sprintf("%d:0", count-1))
+	var lastFrame model.StreamFrame
+	for i := range count {
+		event := reconnected.await(t, "frame", nil)
+		if err := json.Unmarshal([]byte(event.data), &lastFrame); err != nil {
+			t.Fatal(err)
 		}
+		if lastFrame.Payload.Text != strconv.Itoa(i) || event.id != fmt.Sprintf("%d:%d", count-1, lastFrame.ID) {
+			t.Fatalf("composite frame replay gap: %+v", event)
+		}
+	}
+	reconnected.cancel()
+	// A frame-only reconnect must preserve the sequence watermark too.
+	resumed := openStream(t, detailURL+"?after_seq=-1&after_frame=0", fmt.Sprintf("%d:%d", count-1, lastFrame.ID-1))
+	event := resumed.await(t, "frame", nil)
+	if event.id != fmt.Sprintf("%d:%d", count-1, lastFrame.ID) {
+		t.Fatal("last id did not override both query watermarks", event)
 	}
 }

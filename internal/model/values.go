@@ -177,7 +177,7 @@ type QuestionIntent struct {
 }
 type Question struct {
 	ID          string           `json:"id"`
-	Question    string           `json:"question"`
+	Question    string           `json:"question,omitempty"`
 	Detail      string           `json:"detail,omitempty"`
 	Header      string           `json:"header,omitempty"`
 	Options     []QuestionOption `json:"options,omitempty"`

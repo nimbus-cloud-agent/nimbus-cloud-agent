@@ -61,6 +61,22 @@ func validateAnswer(questions []model.Question, answer model.QuestionAnswer) err
 }
 
 func (s *Server) questionRoutes(r *gin.Engine) {
+	r.GET("/api/sessions/:id/questions/:question", func(c *gin.Context) {
+		sess, ok := s.session(c)
+		if !ok {
+			return
+		}
+		if _, err := uuid.Parse(c.Param("question")); err != nil {
+			s.fail(c, 400, fmt.Errorf("invalid question ID"))
+			return
+		}
+		row, err := s.S.Question(c.Request.Context(), sess.ID, c.Param("question"))
+		if err != nil {
+			s.fail(c, 404, fmt.Errorf("Review not found."))
+			return
+		}
+		c.JSON(200, model.UserQuestion(row))
+	})
 	r.POST("/api/sessions/:id/questions/:question/answer", func(c *gin.Context) {
 		sess, ok := s.session(c)
 		if !ok {
@@ -122,7 +138,7 @@ func (s *Server) waitQuestion(ctx context.Context, out model.Outbox, request mod
 	}
 	defer s.S.InterruptQuestions(context.WithoutCancel(ctx), q.ID)
 	for range updates.signals(ctx, 0) {
-		row, err := s.S.Question(ctx, q.ID)
+		row, err := s.S.Question(ctx, q.SessionID, q.ID)
 		if err != nil {
 			return model.QuestionAnswer{}, err
 		}
