@@ -137,6 +137,7 @@ export type TurnSummary = {
   has_details: boolean;
   tool_count: number;
   failed_count: number;
+  has_reasoning?: boolean;
   duration?: number;
   usage?: TokenUsage;
   plan_review_retry?: { seq: number };

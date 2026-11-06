@@ -139,11 +139,12 @@ func (s *Store) turnSummary(ctx context.Context, out Outbox) (model.TurnSummary,
 		return summary, err
 	}
 	var row struct {
-		FinalText   string
-		ToolCount   int
-		FailedCount int
-		Duration    *float64
-		RetrySeq    *int64
+		FinalText    string
+		ToolCount    int
+		FailedCount  int
+		Duration     *float64
+		RetrySeq     *int64
+		HasReasoning bool
 	}
 	err = s.db.WithContext(ctx).Raw(`WITH trace AS MATERIALIZED (
  SELECT seq,type,payload->'data' AS d,(payload->>'time')::double precision AS time
@@ -166,11 +167,13 @@ SELECT COALESCE((SELECT text FROM answers WHERE text<>'' ORDER BY seq DESC LIMIT
  (SELECT count(*) FROM calls WHERE id IS NOT NULL) AS tool_count,
  (SELECT count(*) FROM calls WHERE id IS NOT NULL AND failed) AS failed_count,
  ((SELECT time FROM trace WHERE type='turn/end' ORDER BY seq LIMIT 1)-(SELECT time FROM trace WHERE type='turn/start' ORDER BY seq LIMIT 1))/1000 AS duration,
- (SELECT seq FROM retry) AS retry_seq`, out.SessionID, start, end, end).Scan(&row).Error
+ (SELECT seq FROM retry) AS retry_seq,
+ (SELECT EXISTS(SELECT 1 FROM trace WHERE type='assistant/message' AND (d#>'{message,content}') @> '[{"type":"reasoning"}]'::jsonb)) AS has_reasoning`, out.SessionID, start, end, end).Scan(&row).Error
 	if err != nil {
 		return summary, dbError(err)
 	}
 	summary.FinalText, summary.ToolCount, summary.FailedCount, summary.Duration = row.FinalText, row.ToolCount, row.FailedCount, row.Duration
+	summary.HasReasoning = row.HasReasoning
 	usage, err := s.turnUsage(ctx, out.SessionID, out.TurnID)
 	if err != nil {
 		return summary, err

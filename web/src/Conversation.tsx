@@ -122,7 +122,19 @@ function ConversationTurn({
 }: ConversationProps & { o: Outbox; summary?: TurnSummary; last: boolean }) {
   const running = !o.outcome && o.status !== "failed";
   const [open, setOpen] = useTurnDisclosure(`process:${o.turn_id}`, running);
-  const detail = useTurnMetadata(sessionId, o.turn_id, open, running);
+  // A turn without tool calls has no execution fold, but it can still carry
+  // reasoning, so its metadata is loaded to render those folds inline.
+  const folded =
+    running ||
+    !summary ||
+    summary.tool_count > 0 ||
+    summary.failed_count > 0;
+  const detail = useTurnMetadata(
+    sessionId,
+    o.turn_id,
+    open || !folded,
+    running,
+  );
   const metadata = detail.metadata;
   useLayoutEffect(() => {
     onOutput();
@@ -158,9 +170,70 @@ function ConversationTurn({
   const failureCount =
     summary?.failed_count ?? tools.filter((tool) => tool.failed).length;
   // A turn without tool calls has nothing to expand, so the execution fold is
-  // replaced by the compact duration/usage line below.
+  // replaced by the compact duration/usage line below; its reasoning still
+  // renders inline.
   const showProcess =
-    running || pendingReviews.length > 0 || toolCount > 0 || failureCount > 0;
+    folded || pendingReviews.length > 0 || toolCount > 0 || failureCount > 0;
+  const showReasoning = !showProcess && !!summary?.has_reasoning;
+
+  const process = (
+    <>
+      <TraceStatus {...detail} />
+      {processRows.map((row) =>
+        "tool" in row ? (
+          <ToolCall
+            key={`tool-${row.tool.id}`}
+            header={row.tool}
+            settled={!running}
+            waiting={waiting}
+            sessionId={sessionId}
+            turnId={o.turn_id}
+          />
+        ) : (
+          <div key={`message-${row.message.seq}`}>
+            {row.message.has_reasoning && (
+              <Reasoning
+                sessionId={sessionId}
+                turnId={o.turn_id}
+                seq={row.message.seq}
+                running={false}
+                onOpenLibraryFile={onOpenLibraryFile}
+              />
+            )}
+            {row.message !== finalMessage && row.message.text && (
+              <Rich onOpenLibraryFile={onOpenLibraryFile}>
+                {row.message.text}
+              </Rich>
+            )}
+          </div>
+        ),
+      )}
+      {metadata?.attempts.map(
+        (attempt) =>
+          attempt.has_reasoning && (
+            <Reasoning
+              key={attempt.id}
+              sessionId={sessionId}
+              turnId={o.turn_id}
+              attemptId={attempt.id}
+              running={running && attempt.ended_seq == null}
+              onOpenLibraryFile={onOpenLibraryFile}
+            />
+          ),
+      )}
+      {running &&
+        metadata?.pending_tools.map((call) => (
+          <PendingToolCall
+            key={call.id}
+            sessionId={sessionId}
+            turnId={o.turn_id}
+            id={call.id}
+            name={call.name}
+            running={running}
+          />
+        ))}
+    </>
+  );
   return (
     <section className="turn" data-turn-id={o.turn_id}>
       <div className="user-message">
@@ -202,7 +275,7 @@ function ConversationTurn({
           <strong>Nimbus</strong>
           <span>Cloud agent</span>
         </div>
-        {showProcess && (
+        {showProcess ? (
           <ExecutionProcess
             count={toolCount}
             failures={failureCount}
@@ -212,61 +285,10 @@ function ConversationTurn({
             open={open}
             onOpenChange={setOpen}
           >
-            <TraceStatus {...detail} />
-            {processRows.map((row) =>
-              "tool" in row ? (
-                <ToolCall
-                  key={`tool-${row.tool.id}`}
-                  header={row.tool}
-                  settled={!running}
-                  waiting={waiting}
-                  sessionId={sessionId}
-                  turnId={o.turn_id}
-                />
-              ) : (
-                <div key={`message-${row.message.seq}`}>
-                  {row.message.has_reasoning && (
-                    <Reasoning
-                      sessionId={sessionId}
-                      turnId={o.turn_id}
-                      seq={row.message.seq}
-                      running={false}
-                      onOpenLibraryFile={onOpenLibraryFile}
-                    />
-                  )}
-                  {row.message !== finalMessage && row.message.text && (
-                    <Rich onOpenLibraryFile={onOpenLibraryFile}>
-                      {row.message.text}
-                    </Rich>
-                  )}
-                </div>
-              ),
-            )}
-            {metadata?.attempts.map(
-              (attempt) =>
-                attempt.has_reasoning && (
-                  <Reasoning
-                    key={attempt.id}
-                    sessionId={sessionId}
-                    turnId={o.turn_id}
-                    attemptId={attempt.id}
-                    running={running && attempt.ended_seq == null}
-                    onOpenLibraryFile={onOpenLibraryFile}
-                  />
-                ),
-            )}
-            {running &&
-              metadata?.pending_tools.map((call) => (
-                <PendingToolCall
-                  key={call.id}
-                  sessionId={sessionId}
-                  turnId={o.turn_id}
-                  id={call.id}
-                  name={call.name}
-                  running={running}
-                />
-              ))}
+            {process}
           </ExecutionProcess>
+        ) : (
+          showReasoning && process
         )}
         {finalText && (
           <Rich onOpenLibraryFile={onOpenLibraryFile}>{finalText}</Rich>

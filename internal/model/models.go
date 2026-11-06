@@ -135,6 +135,7 @@ type TurnSummary struct {
 	HasDetails      bool             `json:"has_details"`
 	ToolCount       int              `json:"tool_count"`
 	FailedCount     int              `json:"failed_count"`
+	HasReasoning    bool             `json:"has_reasoning"`
 	Duration        *float64         `json:"duration,omitempty"`
 	Usage           *TokenUsage      `json:"usage,omitempty"`
 	PlanReviewRetry *PlanReviewRetry `json:"plan_review_retry,omitempty"`
