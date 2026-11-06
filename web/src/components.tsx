@@ -1,5 +1,18 @@
 import { Select, ListBox, Label, Switch, Accordion } from "@heroui/react";
 import { useId, useState, type ReactNode } from "react";
+export function formatDuration(seconds: number) {
+  return seconds < 60
+    ? `${seconds.toFixed(1)}s`
+    : `${Math.floor(seconds / 60)}m ${Math.round(seconds) % 60}s`;
+}
+
+export function formatTokens(tokens: number) {
+  if (tokens < 1_000) return String(tokens);
+  if (tokens < 1_000_000)
+    return `${(tokens / 1_000).toFixed(tokens < 10_000 ? 2 : 1)}k`;
+  return `${(tokens / 1_000_000).toFixed(1)}M`;
+}
+
 export function Picker({
   label,
   value,

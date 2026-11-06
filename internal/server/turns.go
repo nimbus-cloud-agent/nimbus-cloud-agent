@@ -144,7 +144,7 @@ func (s *Server) runTurn(ctx context.Context, o model.Outbox) (started bool) {
 		turnErr = err
 		return
 	}
-	imageRows, err := s.S.TurnImages(ctx, o.SessionID, o.ID)
+	imageRows, err := s.S.SessionImages(ctx, o.SessionID)
 	if err != nil {
 		turnErr = err
 		return
@@ -154,7 +154,9 @@ func (s *Server) runTurn(ctx context.Context, o model.Outbox) (started bool) {
 		img := model.Image(row)
 		attachments = append(attachments, model.Attachment{Ref: img.Ref, Data: img.Data})
 	}
-	input := executor.TurnInput{SessionID: o.SessionID, TurnID: o.TurnID, MessageID: o.ClientMsgID, Message: o.Content, Options: o.Options, Header: sess.Header, Records: records, WorkDir: dir, APIKey: s.S.Get("deepseek_api_key", s.C.DeepSeekKey), Skills: skills, MCP: s.mcpTools(ctx, mcps), Images: o.Images, Attachments: attachments, Recovery: recovery}
+	input := executor.TurnInput{SaveAttachment: func(ctx context.Context, attachment model.Attachment) error {
+		return s.S.SaveAttachment(ctx, o.SessionID, attachment)
+	}, SessionID: o.SessionID, TurnID: o.TurnID, MessageID: o.ClientMsgID, Message: o.Content, Options: o.Options, Header: sess.Header, Records: records, WorkDir: dir, APIKey: s.S.Get("deepseek_api_key", s.C.DeepSeekKey), Skills: skills, MCP: s.mcpTools(ctx, mcps), Images: o.Images, Attachments: attachments, Recovery: recovery}
 	logging.RegisterSecrets(input.APIKey)
 	turnErr = s.R.Turn(ctx, input, func(event model.TurnEvent) error {
 		// Native cancellation may flush history after the original request context has

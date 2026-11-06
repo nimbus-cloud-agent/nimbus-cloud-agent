@@ -71,6 +71,25 @@ registerRuntime(peer, {
         },
         signal,
       );
+    } else if (input.message === "attachment") {
+      await control.event(
+        {
+          operationId: input.operationId,
+          event: "attachment-saved",
+          data: {
+            ref: {
+              attachmentId: "sha256:" + "a".repeat(64),
+              mediaType: "image/png",
+              bytes: 3,
+              width: 1,
+              height: 1,
+              name: "agent.png",
+            },
+            data: Buffer.from([1, 2, 3]).toString("base64"),
+          },
+        },
+        signal,
+      );
     } else if (input.message === "cancel-tool") {
       const controller = new AbortController();
       const pending = control.tool(

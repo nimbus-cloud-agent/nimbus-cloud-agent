@@ -119,6 +119,16 @@ type SessionView struct {
 type PlanReviewRetry struct {
 	Seq int64 `json:"seq"`
 }
+
+// TokenUsage aggregates the usage frames of every model call in one turn.
+type TokenUsage struct {
+	InputTokens      int64 `json:"input_tokens"`
+	CacheReadTokens  int64 `json:"cache_read_tokens"`
+	CacheWriteTokens int64 `json:"cache_write_tokens"`
+	OutputTokens     int64 `json:"output_tokens"`
+	TotalTokens      int64 `json:"total_tokens"`
+	Calls            int   `json:"calls"`
+}
 type TurnSummary struct {
 	TurnID          string           `json:"turn_id"`
 	FinalText       string           `json:"final_text"`
@@ -126,6 +136,7 @@ type TurnSummary struct {
 	ToolCount       int              `json:"tool_count"`
 	FailedCount     int              `json:"failed_count"`
 	Duration        *float64         `json:"duration,omitempty"`
+	Usage           *TokenUsage      `json:"usage,omitempty"`
 	PlanReviewRetry *PlanReviewRetry `json:"plan_review_retry,omitempty"`
 }
 type History struct {

@@ -18,6 +18,9 @@ import (
 
 // Application-facing inputs intentionally do not alias generated wire types.
 type TurnInput struct {
+	// SaveAttachment persists an image the runtime created so a later turn can
+	// replay it; the runtime owns no durable storage of its own.
+	SaveAttachment                                                   func(context.Context, model.Attachment) error
 	SessionID, TurnID, MessageID, Message, WorkDir, APIKey, Recovery string
 	Options                                                          model.Options
 	Header                                                           *model.NativeHeader
@@ -42,6 +45,7 @@ type callbacks struct {
 	question   func(context.Context, model.QuestionRequest) (model.QuestionAnswer, error)
 	tool       func(context.Context, model.ToolCall) (model.ToolResult, error)
 	diagnostic func(context.Context, generated.ModelDiagnostic)
+	attachment func(context.Context, model.Attachment) error
 }
 type scope struct {
 	ctx       context.Context
@@ -104,7 +108,7 @@ func (r *Runtime) Turn(ctx context.Context, input TurnInput, onEvent func(model.
 	}, question: onQuestion, tool: onTool, diagnostic: func(ctx context.Context, diagnostic generated.ModelDiagnostic) {
 		log := logging.FromContext(logging.WithAttrs(ctx, "session_id", input.SessionID, "turn_id", input.TurnID))
 		log.Warn("model request failed", "diagnostic", diagnostic)
-	}})
+	}, attachment: input.SaveAttachment})
 	wire.OperationID = id
 	_, err = c.client.Turn(ctx, wire)
 	release()
@@ -170,6 +174,29 @@ func withScope[T any](c controlReceiver, ctx context.Context, id string, run fun
 	return run(ctx, s.callbacks)
 }
 func (c controlReceiver) Event(ctx context.Context, input generated.EventRequest) (generated.SuccessResult, error) {
+	if input.Event == generated.AttachmentSaved {
+		var attachment generated.AttachmentData
+		if err := json.Unmarshal(input.Data, &attachment); err != nil {
+			return generated.SuccessResult{}, err
+		}
+		data, err := base64.StdEncoding.Strict().DecodeString(attachment.Data)
+		if err != nil || len(data) == 0 || len(data) > 5<<20 {
+			return generated.SuccessResult{}, errors.New("invalid attachment bytes")
+		}
+		var ref model.ImageRef
+		if err := json.Unmarshal(attachment.Ref, &ref); err != nil || ref.AttachmentID == "" {
+			return generated.SuccessResult{}, errors.New("invalid attachment reference")
+		}
+		return withScope(c, ctx, input.OperationID, func(ctx context.Context, cb callbacks) (generated.SuccessResult, error) {
+			if cb.attachment == nil {
+				return generated.SuccessResult{}, errors.New("unexpected attachment")
+			}
+			if err := cb.attachment(ctx, model.Attachment{Ref: ref, Data: data}); err != nil {
+				return generated.SuccessResult{}, err
+			}
+			return generated.SuccessResult{Ok: true}, nil
+		})
+	}
 	if input.Event == generated.Diagnostic {
 		var diagnostic generated.ModelDiagnostic
 		if err := json.Unmarshal(input.Data, &diagnostic); err != nil {

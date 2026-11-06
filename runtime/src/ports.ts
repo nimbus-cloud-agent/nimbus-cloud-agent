@@ -2,6 +2,7 @@ import type { SessionHeader, SessionEvent } from "@deepseek-ai/dsh-session";
 import type { AssistantStreamFrame } from "@deepseek-ai/dsh-agent";
 import type { AskUserQuestionItem } from "@deepseek-ai/dsh-user-questions";
 import type {
+  AttachmentData,
   ToolCall,
   TurnRequest,
   ExternalResult,
@@ -16,6 +17,7 @@ export type TurnEvent =
   | { event: "record"; data: SessionEvent }
   | { event: "frame"; data: AssistantStreamFrame }
   | { event: "diagnostic"; data: ModelDiagnostic }
+  | { event: "attachment-saved"; data: AttachmentData }
   | { event: "ready" | "flushing"; data: Record<string, never> }
   | { event: "done"; data: { seq: number; outcome: string; error: string } };
 export interface ReviewRequest {

@@ -8,6 +8,7 @@ import type { TurnHost } from "./ports.js";
 import { errorMessage } from "./errors.js";
 import { turnResult } from "./turn-result.js";
 import { withProviderAdapter } from "./provider-adapter.js";
+import { persistSavedImages } from "./attachments.js";
 import type {} from "@deepseek-ai/dsh-agent";
 import type {} from "@deepseek-ai/dsh-llm";
 import type {} from "@deepseek-ai/dsh-session-persistence-jsonl";
@@ -256,6 +257,11 @@ export async function runTurn(
       dshHome: input.work_dir + "/attachments",
       maxImageBytes: 5 * 1024 * 1024,
     });
+    persistSavedImages(
+      ctx.attachments,
+      (input.attachments ?? []).map((image) => image.ref.attachmentId),
+      (data) => emit({ event: "attachment-saved", data }),
+    );
     if (input.attachments?.length) {
       for (const image of input.attachments) {
         const ref = await ctx.attachments.saveImage({

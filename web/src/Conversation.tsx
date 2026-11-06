@@ -10,11 +10,12 @@ import { Button } from "@heroui/react";
 import Rich from "./Rich";
 import PlanReview from "./PlanReview";
 import PlanReviewRetry from "./PlanReviewRetry";
-import { Fold } from "./components";
+import { Fold, formatDuration, formatTokens } from "./components";
 import {
   api,
   loadPlanReview,
   type TurnSummary,
+  type TokenUsage,
   type Outbox,
   type UserQuestion,
 } from "./api";
@@ -153,6 +154,13 @@ function ConversationTurn({
     ...tools.map((tool) => ({ seq: tool.seq, tool })),
     ...messages.map((message) => ({ seq: message.seq, message })),
   ].sort((a, b) => a.seq - b.seq);
+  const toolCount = summary?.tool_count ?? tools.length;
+  const failureCount =
+    summary?.failed_count ?? tools.filter((tool) => tool.failed).length;
+  // A turn without tool calls has nothing to expand, so the execution fold is
+  // replaced by the compact duration/usage line below.
+  const showProcess =
+    running || pendingReviews.length > 0 || toolCount > 0 || failureCount > 0;
   return (
     <section className="turn" data-turn-id={o.turn_id}>
       <div className="user-message">
@@ -194,13 +202,10 @@ function ConversationTurn({
           <strong>Nimbus</strong>
           <span>Cloud agent</span>
         </div>
-        {(summary?.has_details || running || !!metadata) && (
+        {showProcess && (
           <ExecutionProcess
-            count={summary?.tool_count ?? tools.length}
-            failures={
-              summary?.failed_count ??
-              tools.filter((tool) => tool.failed).length
-            }
+            count={toolCount}
+            failures={failureCount}
             outcome={o.outcome || (o.status === "failed" ? "error" : "")}
             duration={summary?.duration}
             waiting={pendingReviews.length > 0}
@@ -275,6 +280,12 @@ function ConversationTurn({
                 </Rich>
               ),
           )}
+        {!running && summary?.usage && (
+          <TurnUsage
+            usage={summary.usage}
+            duration={showProcess ? undefined : summary.duration}
+          />
+        )}
         {questions
           .filter((q) => q.turn_id === o.turn_id)
           .map((q) => (
@@ -326,5 +337,34 @@ function ConversationTurn({
         )}
       </div>
     </section>
+  );
+}
+
+function TurnUsage({
+  usage,
+  duration,
+}: {
+  usage: TokenUsage;
+  duration?: number;
+}) {
+  const billed =
+    usage.input_tokens + usage.cache_read_tokens + usage.cache_write_tokens;
+  const hit = billed > 0 ? Math.round((usage.cache_read_tokens * 100) / billed) : 0;
+  const detail = [
+    `input ${formatTokens(usage.input_tokens)}`,
+    `cache read ${formatTokens(usage.cache_read_tokens)} (${hit}%)`,
+    usage.cache_write_tokens > 0
+      ? `cache write ${formatTokens(usage.cache_write_tokens)}`
+      : "",
+    `output ${formatTokens(usage.output_tokens)}`,
+    `total ${formatTokens(usage.total_tokens)}`,
+    `${usage.calls} model ${usage.calls === 1 ? "call" : "calls"}`,
+  ].filter(Boolean);
+  return (
+    <div className="turn-usage" title={detail.join(" · ")}>
+      {duration != null && <span>{formatDuration(duration)}</span>}
+      <span>{formatTokens(usage.total_tokens)} tokens</span>
+      {hit > 0 && <span>{hit}% cached</span>}
+    </div>
   );
 }

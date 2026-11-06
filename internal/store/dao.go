@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/model"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -277,10 +278,17 @@ func (s *Store) ImageMetadata(ctx context.Context, sid, id string) (Image, error
 func (s *Store) CreateImage(ctx context.Context, row Image) error {
 	return dbError(s.db.WithContext(ctx).Create(&row).Error)
 }
-func (s *Store) TurnImages(ctx context.Context, sid, oid string) ([]Image, error) {
+
+// SessionImages returns every image a turn may replay: uploads referenced by
+// the conversation plus images the agent produced in earlier turns.
+func (s *Store) SessionImages(ctx context.Context, sid string) ([]Image, error) {
 	rows := []Image{}
-	err := s.db.WithContext(ctx).Where("session_id=? AND id IN (SELECT (jsonb_array_elements(images)->>'id')::uuid FROM outbox_messages WHERE session_id=? AND (status='delivered' OR id=?))", sid, sid, oid).Find(&rows).Error
+	err := s.db.WithContext(ctx).Where("session_id=?", sid).Order("created_at, id").Find(&rows).Error
 	return rows, dbError(err)
+}
+func (s *Store) SaveAttachment(ctx context.Context, sid string, attachment model.Attachment) error {
+	row := Image{ID: uuid.NewString(), SessionID: sid, Ref: attachment.Ref, Data: attachment.Data}
+	return dbError(s.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&row).Error)
 }
 func (s *Store) Questions(ctx context.Context, sid string) ([]UserQuestion, error) {
 	rows := []UserQuestion{}

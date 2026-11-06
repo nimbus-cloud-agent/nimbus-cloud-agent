@@ -127,7 +127,8 @@ func (s *Store) turnBounds(ctx context.Context, out Outbox) (int64, *int64, erro
 }
 
 // Only scalar/text projections leave PostgreSQL here: no native records, tool
-// arguments, reasoning blocks, result bodies, or stream_frames are read.
+// arguments, reasoning blocks, result bodies, or non-terminal stream frames are
+// read. Usage frames contribute counters only.
 func (s *Store) turnSummary(ctx context.Context, out Outbox) (model.TurnSummary, error) {
 	summary := model.TurnSummary{TurnID: out.TurnID, HasDetails: out.DeliveredSeq != nil || out.Status == "starting"}
 	if out.DeliveredSeq == nil {
@@ -170,10 +171,43 @@ SELECT COALESCE((SELECT text FROM answers WHERE text<>'' ORDER BY seq DESC LIMIT
 		return summary, dbError(err)
 	}
 	summary.FinalText, summary.ToolCount, summary.FailedCount, summary.Duration = row.FinalText, row.ToolCount, row.FailedCount, row.Duration
+	usage, err := s.turnUsage(ctx, out.SessionID, out.TurnID)
+	if err != nil {
+		return summary, err
+	}
+	summary.Usage = usage
 	if row.RetrySeq != nil {
 		summary.PlanReviewRetry = &model.PlanReviewRetry{Seq: *row.RetrySeq}
 	}
 	return summary, nil
+}
+
+func (s *Store) turnUsage(ctx context.Context, sid, tid string) (*model.TokenUsage, error) {
+	var row struct {
+		Calls            int
+		InputTokens      int64
+		CacheReadTokens  int64
+		CacheWriteTokens int64
+		OutputTokens     int64
+		TotalTokens      int64
+	}
+	err := s.db.WithContext(ctx).Raw(`SELECT count(*) AS calls,
+ COALESCE(SUM((payload#>>'{chunk,usage,inputTokens}')::bigint),0) AS input_tokens,
+ COALESCE(SUM((payload#>>'{chunk,usage,cacheReadTokens}')::bigint),0) AS cache_read_tokens,
+ COALESCE(SUM((payload#>>'{chunk,usage,cacheWriteTokens}')::bigint),0) AS cache_write_tokens,
+ COALESCE(SUM((payload#>>'{chunk,usage,outputTokens}')::bigint),0) AS output_tokens,
+ COALESCE(SUM((payload#>>'{chunk,usage,totalTokens}')::bigint),0) AS total_tokens
+ FROM stream_frames WHERE session_id=? AND turn_id=? AND payload#>>'{chunk,type}'='usage'`, sid, tid).Scan(&row).Error
+	if err != nil {
+		return nil, dbError(err)
+	}
+	if row.Calls == 0 {
+		return nil, nil
+	}
+	if row.TotalTokens == 0 {
+		row.TotalTokens = row.InputTokens + row.CacheReadTokens + row.CacheWriteTokens + row.OutputTokens
+	}
+	return &model.TokenUsage{InputTokens: row.InputTokens, CacheReadTokens: row.CacheReadTokens, CacheWriteTokens: row.CacheWriteTokens, OutputTokens: row.OutputTokens, TotalTokens: row.TotalTokens, Calls: row.Calls}, nil
 }
 
 type TurnTrace struct {

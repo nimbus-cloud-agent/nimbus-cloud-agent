@@ -15,7 +15,7 @@ import {
   TerminalSquare,
   Workflow,
 } from "lucide-react";
-import { Fold } from "./components";
+import { Fold, formatDuration } from "./components";
 import {
   buildToolTree,
   streamingToolCalls,
@@ -381,7 +381,6 @@ export function ExecutionProcess({
   waiting: boolean;
   children: ReactNode;
 }) {
-  const seconds = Math.round(duration ?? 0);
   const title = waiting
     ? "Waiting for plan approval"
     : !outcome
@@ -409,9 +408,7 @@ export function ExecutionProcess({
           )}
           {duration != null && outcome && (
             <span className="process-duration">
-              {duration < 60
-                ? `${duration.toFixed(1)}s`
-                : `${Math.floor(seconds / 60)}m ${seconds % 60}s`}
+              {formatDuration(duration)}
             </span>
           )}
         </span>

@@ -123,6 +123,14 @@ export type StreamFrame = {
     outcome?: { seq?: number };
   };
 };
+export type TokenUsage = {
+  input_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  calls: number;
+};
 export type TurnSummary = {
   turn_id: string;
   final_text: string;
@@ -130,6 +138,7 @@ export type TurnSummary = {
   tool_count: number;
   failed_count: number;
   duration?: number;
+  usage?: TokenUsage;
   plan_review_retry?: { seq: number };
 };
 export type History = {

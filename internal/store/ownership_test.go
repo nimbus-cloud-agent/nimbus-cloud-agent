@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"testing"
 	"time"
 
@@ -64,8 +65,12 @@ func TestOwnershipHandoffWaitsForDrain(t *testing.T) {
 	}
 	defer successor.Close()
 	var count int64
-	if err := successor.db.Table("schema_migrations").Count(&count).Error; err != nil || count != 12 {
-		t.Fatalf("migrations applied incorrectly: %d, %v", count, err)
+	applied, err := fs.Glob(migrations, "migrations/*.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := successor.db.Table("schema_migrations").Count(&count).Error; err != nil || count != int64(len(applied)) {
+		t.Fatalf("migrations applied incorrectly: %d of %d, %v", count, len(applied), err)
 	}
 	if _, err := TryOpenWithHandoff(ctx, dsn); !errors.Is(err, ErrDatabaseOwned) {
 		t.Fatalf("retired owner tried to take over: %v", err)

@@ -1098,6 +1098,15 @@ pre {
   margin-left: auto;
   font-variant-numeric: tabular-nums;
 }
+.turn-usage {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
 .process-errors {
   font-size: 12px;
   color: #b64e3b;

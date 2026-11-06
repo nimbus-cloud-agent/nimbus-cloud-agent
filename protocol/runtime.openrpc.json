@@ -565,6 +565,15 @@
         ],
         "additionalProperties": false
       },
+      "AttachmentData": {
+        "type": "object",
+        "properties": {
+          "ref": {},
+          "data": { "type": "string" }
+        },
+        "required": ["ref", "data"],
+        "additionalProperties": false
+      },
       "ModelErrorDiagnostic": {
         "type": "object",
         "properties": {
@@ -615,6 +624,7 @@
               "frame",
               "flushing",
               "diagnostic",
+              "attachment-saved",
               "done"
             ]
           },
