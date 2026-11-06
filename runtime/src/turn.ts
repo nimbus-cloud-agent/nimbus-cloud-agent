@@ -6,6 +6,7 @@ import { WasmRuntime, createHumanWaitClock } from "./wasm.js";
 import type { TurnRequest } from "./generated/types.js";
 import type { TurnHost } from "./ports.js";
 import { errorMessage } from "./errors.js";
+import { turnResult } from "./turn-result.js";
 import type {} from "@deepseek-ai/dsh-agent";
 import type {} from "@deepseek-ai/dsh-llm";
 import type {} from "@deepseek-ai/dsh-session-persistence-jsonl";
@@ -567,7 +568,10 @@ export async function runTurn(
       provider: "deepseek-official",
       model: input.options.model,
       reasoningEffort: ReasoningEffortId(input.options.thinking),
-      maxTokens: 8192,
+      // Headroom for one large file written through a single tool call: the
+      // provider advertises 393216 output tokens, and the old 8192 ceiling cut
+      // tool arguments mid-JSON, which Harness then dropped entirely.
+      maxTokens: 65536,
     };
     handle = input.header
       ? await ctx.agents.resume({
@@ -619,19 +623,7 @@ export async function runTurn(
     await sync();
     await emit({
       event: "done",
-      data: {
-        seq: sent,
-        outcome:
-          end?.data?.reason?.kind === "error"
-            ? "error"
-            : end?.data?.reason?.kind === "aborted"
-              ? "interrupted"
-              : "completed",
-        error:
-          end?.data?.reason?.kind === "error"
-            ? JSON.stringify(end.data.reason.error)
-            : "",
-      },
+      data: { seq: sent, ...turnResult(end?.data?.reason) },
     });
     return { finished: true };
   } finally {
