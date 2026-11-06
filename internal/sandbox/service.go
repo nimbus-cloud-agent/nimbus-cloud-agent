@@ -4,6 +4,7 @@ package sandbox
 
 import (
 	"context"
+	"io"
 
 	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/model"
 )
@@ -17,6 +18,14 @@ type Service interface {
 	Exec(ctx context.Context, sandboxID string, args model.SandboxArgs, output func(model.CommandOutput) error) (model.CommandResult, error)
 	ReadFile(ctx context.Context, sandboxID, path string) (model.FileReadResult, error)
 	WriteFile(ctx context.Context, sandboxID, path, content string) (model.FileWriteResult, error)
+	// WriteFileStream uploads path from a stream instead of an in-memory
+	// string, so a file of any size up to the caller's cap can be written
+	// without holding it in memory.
+	WriteFileStream(ctx context.Context, sandboxID, path string, r io.Reader) (model.FileWriteResult, error)
+	// ReadFileStream returns the file's bytes as a stream plus its size.
+	// The caller must close the stream; the size is advisory and the
+	// caller enforces its own cap while reading.
+	ReadFileStream(ctx context.Context, sandboxID, path string) (io.ReadCloser, int64, error)
 	OpenTerminal(ctx context.Context, sandboxID string) (Terminal, error)
 }
 

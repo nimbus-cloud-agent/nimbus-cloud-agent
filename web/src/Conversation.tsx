@@ -32,6 +32,7 @@ export default function Conversation({
   frames,
   questions,
   retryError,
+  onOpenLibraryFile,
 }: {
   sessionId: string;
   events: Event[];
@@ -39,6 +40,7 @@ export default function Conversation({
   frames: StreamFrame[];
   questions: UserQuestion[];
   retryError: (s: string) => void;
+  onOpenLibraryFile?: (id: string) => void;
 }) {
   return (
     <>
@@ -166,11 +168,11 @@ export default function Conversation({
                           </span>
                         }
                       >
-                        <Rich>{reasoning}</Rich>
+                        <Rich onOpenLibraryFile={onOpenLibraryFile}>{reasoning}</Rich>
                       </Fold>
                     )}
                     {e !== finalMessage && text(content) && (
-                      <Rich>{text(content)}</Rich>
+                      <Rich onOpenLibraryFile={onOpenLibraryFile}>{text(content)}</Rich>
                     )}
                   </div>
                 );
@@ -188,7 +190,7 @@ export default function Conversation({
                       </span>
                     }
                   >
-                    <Rich>{st.reasoning}</Rich>
+                    <Rich onOpenLibraryFile={onOpenLibraryFile}>{st.reasoning}</Rich>
                   </Fold>
                 ),
             )}
@@ -248,15 +250,20 @@ export default function Conversation({
                 processContent
               )}
               {finalMessage && (
-                <Rich>{text(finalMessage.payload.data.message?.content)}</Rich>
+                <Rich onOpenLibraryFile={onOpenLibraryFile}>{text(finalMessage.payload.data.message?.content)}</Rich>
               )}
               {unresolved.map(
-                (st, j) => st.text && <Rich key={j}>{st.text}</Rich>,
+                (st, j) => st.text && <Rich key={j} onOpenLibraryFile={onOpenLibraryFile}>{st.text}</Rich>,
               )}
               {questions
                 .filter((q) => q.turn_id === o.turn_id)
                 .map((q) => (
-                  <PlanReview key={q.id} sessionId={sessionId} review={q} />
+                  <PlanReview
+                  key={q.id}
+                  sessionId={sessionId}
+                  review={q}
+                  onOpenLibraryFile={onOpenLibraryFile}
+                />
                 ))}
               {failedReview && o.outcome && i === outbox.length - 1 && (
                 <PlanReviewRetry

@@ -65,3 +65,50 @@ func TestOAuthRequestMapsFields(t *testing.T) {
 		t.Fatalf("oauth wire lost client/tokens: client=%s tokens=%s", wire.Client, wire.Tokens)
 	}
 }
+
+func TestEncodeToolResultLibrary(t *testing.T) {
+	raw, err := encodeToolResult(model.ToolResult{Library: &model.LibraryResult{ID: "file-1", Name: "notes.md", Version: 2, MimeType: "text/markdown", SizeBytes: 12, Content: "hello", Link: "nimbus://library/file-1", SHA256: "abc"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded["id"] != "file-1" || decoded["name"] != "notes.md" || decoded["version"] != float64(2) || decoded["link"] != "nimbus://library/file-1" {
+		t.Fatalf("library result lost fields: %s", raw)
+	}
+	// A list result keeps its files array.
+	raw, err = encodeToolResult(model.ToolResult{Library: &model.LibraryResult{Files: []model.LibraryFileSummary{{ID: "f", Name: "a.txt", MimeType: "text/plain", SizeBytes: 3, Version: 1}}}})
+	if err != nil || !strings.Contains(string(raw), `"files":[{"id":"f"`) {
+		t.Fatalf("library list encoding: %s, %v", raw, err)
+	}
+}
+
+func TestEncodeToolResultRequiresExactlyOneVariant(t *testing.T) {
+	if _, err := encodeToolResult(model.ToolResult{}); err == nil {
+		t.Fatal("empty result was accepted")
+	}
+	if _, err := encodeToolResult(model.ToolResult{Library: &model.LibraryResult{}, MCP: &model.MCPCallResult{}}); err == nil {
+		t.Fatal("two variants were accepted")
+	}
+	for _, result := range []model.ToolResult{
+		{Sandbox: &model.SandboxView{}}, {Command: &model.CommandResult{}}, {ReadFile: &model.FileReadResult{}},
+		{WriteFile: &model.FileWriteResult{}}, {MCP: &model.MCPCallResult{}},
+	} {
+		if _, err := encodeToolResult(result); err != nil {
+			t.Fatalf("single variant rejected: %v", err)
+		}
+	}
+}
+
+func TestLibraryArgsDecode(t *testing.T) {
+	var call model.ToolCall
+	if err := json.Unmarshal([]byte(`{"id":"f","name":"a.md","version":3,"offset":10,"length":100,"path":"/workspace/a.md","content":"hi","mime_type":"text/markdown"}`), &call.Library); err != nil {
+		t.Fatal(err)
+	}
+	args := call.Library
+	if args.ID != "f" || args.Name != "a.md" || args.Version != 3 || args.Offset != 10 || args.Length != 100 || args.Path != "/workspace/a.md" || args.Content != "hi" || args.MimeType != "text/markdown" {
+		t.Fatalf("library args lost fields: %+v", args)
+	}
+}

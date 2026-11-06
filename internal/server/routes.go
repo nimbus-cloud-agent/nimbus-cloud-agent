@@ -218,6 +218,7 @@ func (s *Server) routes(r *gin.Engine) {
 	r.GET("/api/sessions/:id/terminal", s.terminal)
 	s.settingsRoutes(r)
 	s.imageRoutes(r)
+	s.libraryRoutes(r)
 	s.questionRoutes(r)
 }
 func (s *Server) message(c *gin.Context) {

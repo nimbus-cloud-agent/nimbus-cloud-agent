@@ -107,3 +107,31 @@ type StreamFrame struct {
 	Payload   model.FramePayload `gorm:"type:jsonb;serializer:json"`
 	CreatedAt time.Time
 }
+
+// LibraryFile is one named file in the global Library. A write with an
+// existing name creates a new FileVersion; CurrentVersionID points at the
+// latest version and SizeBytes tracks that version's size.
+type LibraryFile struct {
+	ID               string `gorm:"primaryKey;type:uuid"`
+	Name             string `gorm:"uniqueIndex"`
+	MimeType         string
+	SizeBytes        int64
+	CurrentVersionID *string `gorm:"type:uuid"`
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+}
+
+type FileVersion struct {
+	ID            string `gorm:"primaryKey;type:uuid"`
+	FileID        string `gorm:"type:uuid;index"`
+	VersionNumber int
+	SizeBytes     int64
+	SHA256        string
+	CreatedAt     time.Time
+}
+
+type FileChunk struct {
+	VersionID  string `gorm:"primaryKey;type:uuid"`
+	ChunkIndex int    `gorm:"primaryKey"`
+	Data       []byte `gorm:"type:bytea"`
+}

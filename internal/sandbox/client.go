@@ -184,15 +184,70 @@ func (c *Client) ReadFile(ctx context.Context, id, path string) (model.FileReadR
 	return model.FileReadResult{Content: strings.ToValidUTF8(string(data[:min(len(data), outputLimit)]), "�"), Truncated: len(data) > outputLimit}, nil
 }
 func (c *Client) WriteFile(ctx context.Context, id, path, content string) (model.FileWriteResult, error) {
+	return c.WriteFileStream(ctx, id, path, strings.NewReader(content))
+}
+
+// WriteFileStream uploads through the SDK filesystem API, which takes an
+// io.Reader and streams it in a single POST to envd's /files endpoint.
+// The SDK has no append operation, so a whole-file streaming write — not
+// chunked appends via Exec — is the mechanism: the caller supplies a reader
+// that yields 1 MiB library chunks, and neither side holds the whole file.
+func (c *Client) WriteFileStream(ctx context.Context, id, path string, r io.Reader) (model.FileWriteResult, error) {
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
+	if id == "" {
+		return model.FileWriteResult{}, errors.New("sandbox ID is required")
+	}
+	if r == nil {
+		return model.FileWriteResult{}, errors.New("file content reader is required")
+	}
 	sb, err := c.sdk.Connect(ctx, id, 60)
 	if err != nil {
 		return model.FileWriteResult{}, c.failure(ctx, err)
 	}
-	_, err = sb.Filesystem.Write(ctx, path, strings.NewReader(content), e2b.WithFileUser("root"))
+	_, err = sb.Filesystem.Write(ctx, path, r, e2b.WithFileUser("root"))
 	if err != nil {
 		return model.FileWriteResult{}, c.failure(ctx, err)
 	}
 	return model.FileWriteResult{Path: path, Written: true}, nil
+}
+
+// ReadFileStream returns the envd /files response body as a stream, so the
+// caller can enforce its own size cap while reading instead of loading the
+// whole file. Stat supplies the size up front; a file that grows mid-read
+// is still bounded by the caller's cap.
+func (c *Client) ReadFileStream(ctx context.Context, id, path string) (io.ReadCloser, int64, error) {
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	if id == "" {
+		cancel()
+		return nil, 0, errors.New("sandbox ID is required")
+	}
+	sb, err := c.sdk.Connect(ctx, id, 60)
+	if err != nil {
+		cancel()
+		return nil, 0, c.failure(ctx, err)
+	}
+	info, err := sb.Filesystem.Stat(ctx, path, e2b.WithFileUser("root"))
+	if err != nil {
+		cancel()
+		return nil, 0, c.failure(ctx, err)
+	}
+	stream, err := sb.Filesystem.Read(ctx, path, e2b.WithFileUser("root"))
+	if err != nil {
+		cancel()
+		return nil, 0, c.failure(ctx, err)
+	}
+	return &streamReadCloser{ReadCloser: stream, cancel: cancel}, info.Size, nil
+}
+
+// streamReadCloser cancels the call context when the stream closes, so a
+// long-lived stream cannot leak its timeout goroutine.
+type streamReadCloser struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (c *streamReadCloser) Close() error {
+	defer c.cancel()
+	return c.ReadCloser.Close()
 }

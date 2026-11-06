@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -62,5 +63,34 @@ func TestCaptureLimitsCombinedOutputAndCancelsOnConsumerFailure(t *testing.T) {
 	c.take("stdout", []byte("data"))
 	if !errors.Is(c.err, failure) || ctx.Err() == nil {
 		t.Fatal("consumer failure did not cancel producer")
+	}
+}
+
+func TestStreamingFileMethodsValidateBeforeConnecting(t *testing.T) {
+	c, err := newClient("test-key", "http://127.0.0.1:1", http.DefaultClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if _, err := c.WriteFileStream(ctx, "", "/workspace/x", strings.NewReader("x")); err == nil || !strings.Contains(err.Error(), "sandbox ID is required") {
+		t.Fatalf("empty sandbox write: %v", err)
+	}
+	if _, err := c.WriteFileStream(ctx, "sb", "/workspace/x", nil); err == nil || !strings.Contains(err.Error(), "reader is required") {
+		t.Fatalf("nil reader write: %v", err)
+	}
+	if _, _, err := c.ReadFileStream(ctx, "", "/workspace/x"); err == nil || !strings.Contains(err.Error(), "sandbox ID is required") {
+		t.Fatalf("empty sandbox read: %v", err)
+	}
+	// A stream wrapper must cancel its context when closed.
+	inner := io.NopCloser(strings.NewReader("x"))
+	ctx, cancel := context.WithCancel(context.Background())
+	wrapped := &streamReadCloser{ReadCloser: inner, cancel: cancel}
+	if err := wrapped.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-ctx.Done():
+	default:
+		t.Fatal("closing the stream did not cancel its context")
 	}
 }

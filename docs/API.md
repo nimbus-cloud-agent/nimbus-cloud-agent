@@ -56,6 +56,31 @@ PNG, JPEG, WebP, and GIF are supported. Limits are 5 MiB per upload, 4 images pe
 
 PostgreSQL owns the normalized bytes and attachment reference. Later turns reconstruct the supervisor's private attachment cache from these bytes, so deleting a completed local cache or restarting Nimbus does not lose images. Removing an image preview detaches it from the draft; session deletion removes all uploaded copies.
 
+## Library
+
+The Library is a global (not per-session) object store in PostgreSQL. Files live in `library_files`, each write creates a new row in `file_versions` (version numbers start at 1), and version bytes are split into 1 MiB `file_chunks` rows. A file is addressed by its UUID or by its flat, unique name; a write with an existing name creates a new version of that file. The link returned for a file is `nimbus://library/<uuid>` and resolves to the current version. Caps are 1 MiB chunks, 100 MB per file, 1 MiB per text read, and 5 MiB per image read.
+
+| Method and path | Behavior |
+| --- | --- |
+| `GET /library` | List all files as `{files:[{id,name,mime_type,size_bytes,version,updated_at}]}`, most recently updated first |
+| `GET /library/:id` | Read one file as `{id,name,mime_type,size_bytes,version,created_at,updated_at,versions:[{version,size_bytes,sha256,created_at}]}` |
+| `GET /library/:id/content?version=N` | Stream one version's raw bytes; `version` defaults to the current version |
+
+The content endpoint sets `Content-Type` to the stored MIME type, `Content-Disposition: inline`, and `X-Content-Type-Options: nosniff`. Stored HTML additionally gets `Content-Security-Policy: sandbox`, so a previewed page can never run as the app's own page. An invalid id, a missing file, or a missing version returns `404`. There is no delete or upload endpoint; the agent tools below are the only writers.
+
+The agent tools are dispatched by the Go control plane:
+
+| Tool | Arguments | Result |
+| --- | --- | --- |
+| `library_list` | none | `{files:[{id,name,mime_type,size_bytes,version,updated_at}]}` |
+| `library_read` | `id` or `name`, optional `version` (default current), `offset`, `length` | `{id,name,version,mime_type,size_bytes,content?,truncated?,image?,link}` |
+| `library_write` | `name`, `content` (UTF-8 text), optional `mime_type` | `{id,name,version,size_bytes,mime_type,link,sha256}` |
+| `library_versions` | `id` or `name` | `{id,name,versions:[{version,size_bytes,sha256,created_at}]}` |
+| `library_copy_to_sandbox` | `id` or `name`, optional `version`, `path` | `{path,bytes,version}` |
+| `library_copy_from_sandbox` | `path`, optional `name` (default: basename of `path`), `mime_type` | `{id,name,version,size_bytes,link}` |
+
+Names are flat: empty names, names over 200 characters, and names containing `/`, `\`, or `..` are rejected. The MIME type is inferred from the extension (`.html`, `.md`/`.markdown`, `.txt`, `.png`, `.jpg`/`.jpeg`, `.gif`, `.webp`, `.svg`, `.json`); an explicit `mime_type` overrides it, otherwise the type is `application/octet-stream`. Text reads honour `offset`/`length` up to 1 MiB per call and set `truncated` when more remains; image reads ignore the range and return the whole image as `{media_type, data}` base64, up to 5 MiB — larger images are refused with an error telling the agent to use `library_copy_to_sandbox` instead. Any other type cannot be read as text or an image and the error tells the agent to use `library_copy_to_sandbox` instead. `library_write` rejects content that is not valid UTF-8 or exceeds 100 MB. The copy tools stream in 1 MiB chunks between PostgreSQL and the session sandbox without holding the whole file in memory, and `library_copy_from_sandbox` enforces the 100 MB cap while reading.
+
 ## Messages and retries
 
 ```http

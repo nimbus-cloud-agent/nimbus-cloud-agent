@@ -7,9 +7,11 @@ import Rich from "./Rich";
 export default function PlanReview({
   sessionId,
   review,
+  onOpenLibraryFile,
 }: {
   sessionId: string;
   review: UserQuestion;
+  onOpenLibraryFile?: (id: string) => void;
 }) {
   const [feedback, setFeedback] = useState("");
   const [editing, setEditing] = useState(false);
@@ -77,7 +79,7 @@ export default function PlanReview({
         <summary>Plan</summary>
         <div className="plan-review-document">
           {review.questions.map((q) => (
-            <Rich key={q.id}>{q.detail ?? q.question}</Rich>
+            <Rich key={q.id} onOpenLibraryFile={onOpenLibraryFile}>{q.detail ?? q.question}</Rich>
           ))}
         </div>
       </details>
