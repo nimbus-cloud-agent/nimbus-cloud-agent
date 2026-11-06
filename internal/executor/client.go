@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 
 	"github.com/google/uuid"
+	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/logging"
 	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/model"
 	"github.com/nimbus-cloud-agent/nimbus-cloud-agent/internal/runtimeprotocol/generated"
 )
@@ -37,9 +38,10 @@ type ImageOutput struct {
 	Data []byte
 }
 type callbacks struct {
-	event    func(model.TurnEvent) error
-	question func(context.Context, model.QuestionRequest) (model.QuestionAnswer, error)
-	tool     func(context.Context, model.ToolCall) (model.ToolResult, error)
+	event      func(model.TurnEvent) error
+	question   func(context.Context, model.QuestionRequest) (model.QuestionAnswer, error)
+	tool       func(context.Context, model.ToolCall) (model.ToolResult, error)
+	diagnostic func(context.Context, generated.ModelDiagnostic)
 }
 type scope struct {
 	ctx       context.Context
@@ -99,7 +101,10 @@ func (r *Runtime) Turn(ctx context.Context, input TurnInput, onEvent func(model.
 			finished.Store(true)
 		}
 		return err
-	}, question: onQuestion, tool: onTool})
+	}, question: onQuestion, tool: onTool, diagnostic: func(ctx context.Context, diagnostic generated.ModelDiagnostic) {
+		log := logging.FromContext(logging.WithAttrs(ctx, "session_id", input.SessionID, "turn_id", input.TurnID))
+		log.Warn("model request failed", "diagnostic", diagnostic)
+	}})
 	wire.OperationID = id
 	_, err = c.client.Turn(ctx, wire)
 	release()
@@ -165,6 +170,19 @@ func withScope[T any](c controlReceiver, ctx context.Context, id string, run fun
 	return run(ctx, s.callbacks)
 }
 func (c controlReceiver) Event(ctx context.Context, input generated.EventRequest) (generated.SuccessResult, error) {
+	if input.Event == generated.Diagnostic {
+		var diagnostic generated.ModelDiagnostic
+		if err := json.Unmarshal(input.Data, &diagnostic); err != nil {
+			return generated.SuccessResult{}, err
+		}
+		return withScope(c, ctx, input.OperationID, func(ctx context.Context, cb callbacks) (generated.SuccessResult, error) {
+			if cb.diagnostic == nil {
+				return generated.SuccessResult{}, errors.New("unexpected model diagnostic")
+			}
+			cb.diagnostic(ctx, diagnostic)
+			return generated.SuccessResult{Ok: true}, nil
+		})
+	}
 	event := model.TurnEvent{Kind: string(input.Event)}
 	var err error
 	switch input.Event {

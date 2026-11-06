@@ -565,6 +565,41 @@
         ],
         "additionalProperties": false
       },
+      "ModelErrorDiagnostic": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "maxLength": 64 },
+          "code": { "type": "string", "maxLength": 64 },
+          "message": { "type": "string", "maxLength": 160 },
+          "errno": { "type": "integer" },
+          "syscall": { "type": "string", "maxLength": 32 },
+          "address": { "type": "string", "maxLength": 45 },
+          "port": { "type": "integer", "minimum": 0, "maximum": 65535 },
+          "status": { "type": "integer", "minimum": 100, "maximum": 599 },
+          "request_id": { "type": "string", "maxLength": 128 }
+        },
+        "required": ["name"],
+        "additionalProperties": false
+      },
+      "ModelDiagnostic": {
+        "type": "object",
+        "properties": {
+          "provider": { "type": "string" },
+          "model": { "type": "string" },
+          "phase": { "type": "string", "enum": ["prepare", "request", "stream"] },
+          "attempt": { "type": "integer", "minimum": 1 },
+          "duration_ms": { "type": "integer", "minimum": 0 },
+          "chunks_received": { "type": "integer", "minimum": 0 },
+          "error_chain": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/ModelErrorDiagnostic" },
+            "maxItems": 8
+          },
+          "truncated": { "type": "boolean" }
+        },
+        "required": ["provider", "model", "phase", "attempt", "duration_ms", "chunks_received", "error_chain", "truncated"],
+        "additionalProperties": false
+      },
       "EventRequest": {
         "type": "object",
         "properties": {
@@ -579,6 +614,7 @@
               "record",
               "frame",
               "flushing",
+              "diagnostic",
               "done"
             ]
           },

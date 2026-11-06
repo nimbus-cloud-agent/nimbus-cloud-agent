@@ -6,6 +6,7 @@ import type {
   TurnRequest,
   ExternalResult,
   ReviewAnswer,
+  ModelDiagnostic,
 } from "./generated/types.js";
 
 // Keep the native SDK discriminants through the worker pool. Only the stdio
@@ -14,6 +15,7 @@ export type TurnEvent =
   | { event: "header"; data: SessionHeader }
   | { event: "record"; data: SessionEvent }
   | { event: "frame"; data: AssistantStreamFrame }
+  | { event: "diagnostic"; data: ModelDiagnostic }
   | { event: "ready" | "flushing"; data: Record<string, never> }
   | { event: "done"; data: { seq: number; outcome: string; error: string } };
 export interface ReviewRequest {

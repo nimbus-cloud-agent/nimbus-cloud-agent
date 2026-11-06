@@ -7,6 +7,7 @@ import type { TurnRequest } from "./generated/types.js";
 import type { TurnHost } from "./ports.js";
 import { errorMessage } from "./errors.js";
 import { turnResult } from "./turn-result.js";
+import { withModelDiagnostics } from "./model-diagnostics.js";
 import type {} from "@deepseek-ai/dsh-agent";
 import type {} from "@deepseek-ai/dsh-llm";
 import type {} from "@deepseek-ai/dsh-session-persistence-jsonl";
@@ -305,10 +306,15 @@ export async function runTurn(
       interpolate: false,
     });
     await mount("dsh-deepseek-llm-api-extensions");
-    await mount("dsh-llm-deepseek-api-key", {
-      apiKeyEnv: "DEEPSEEK_API_KEY",
-      streamIdleTimeoutMs: 120000,
-    });
+    await withModelDiagnostics(
+      ctx.llm,
+      input.api_key,
+      (data) => emit({ event: "diagnostic", data }),
+      () => mount("dsh-llm-deepseek-api-key", {
+        apiKeyEnv: "DEEPSEEK_API_KEY",
+        streamIdleTimeoutMs: 120000,
+      }),
+    );
     await mount("dsh-session-persistence-jsonl", {
       root: input.work_dir,
       compression: "none",

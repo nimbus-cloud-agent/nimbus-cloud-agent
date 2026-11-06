@@ -42,7 +42,7 @@ Each callback carries an **`operationId` UUID** allocated by Go and bound to its
 
 | Method | Input and acknowledgement |
 | --- | --- |
-| `turn.event` | Operation ID, event kind and native data → `{ok: true}` only after persistence. Kinds: `header`, `ready`, `record`, `frame`, `flushing`, `done` |
+| `turn.event` | Operation ID, event kind and native data → `{ok: true}` only after persistence. Kinds: `header`, `ready`, `record`, `frame`, `flushing`, `diagnostic`, `done`. `diagnostic` carries one provider call failure as an allowlisted cause chain (phase, attempt, duration, chunks received, error `code`/`status`/`syscall`), which Go logs and does not persist to session history; Harness keeps only the normalized failure message in the durable record |
 | `turn.question` | Operation ID and native question → `{answer: <validated human response>}` after an explicit browser answer |
 | `tool.call` | Operation ID and `{name,args,call_id}` → `{value: <tool result>}` after authorization/scoped E2B/MCP dispatch |
 

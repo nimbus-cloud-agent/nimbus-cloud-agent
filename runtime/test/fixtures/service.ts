@@ -39,6 +39,38 @@ registerRuntime(peer, {
         });
         signal.throwIfAborted();
       }
+    } else if (input.message === "diagnostic") {
+      await control.event(
+        {
+          operationId: input.operationId,
+          event: "diagnostic",
+          data: {
+            provider: "deepseek-official",
+            model: "deepseek-flash",
+            phase: "request",
+            attempt: 1,
+            duration_ms: 12,
+            chunks_received: 0,
+            error_chain: [
+              {
+                name: "LlmError",
+                message: "DeepSeek Messages transport failed",
+                code: "TRANSPORT",
+              },
+              { name: "TypeError", message: "fetch failed" },
+              {
+                name: "Error",
+                code: "ECONNRESET",
+                syscall: "read",
+                address: "10.0.0.7",
+                port: 443,
+              },
+            ],
+            truncated: false,
+          },
+        },
+        signal,
+      );
     } else if (input.message === "cancel-tool") {
       const controller = new AbortController();
       const pending = control.tool(
