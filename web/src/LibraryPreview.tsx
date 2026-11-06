@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Button, Modal } from "@heroui/react";
-import { Download } from "lucide-react";
+import { Download, ExternalLink } from "lucide-react";
 import {
   getLibraryFile,
   libraryContentUrl,
@@ -262,6 +262,16 @@ function OpenLibraryPreview({
             </Modal.Body>
             {detail && (
               <Modal.Footer>
+                <a
+                  className="library-open-tab"
+                  href={url}
+                  target="_blank"
+                  rel="noreferrer"
+                  aria-label="Open in new tab"
+                  title="Open in new tab"
+                >
+                  <ExternalLink size={15} strokeWidth={1.8} />
+                </a>
                 <a className="image-download" href={url} download={detail.name}>
                   <Download size={16} />
                   Download

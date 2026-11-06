@@ -649,6 +649,26 @@ button:focus-visible,
   max-height: 70vh;
   object-fit: contain;
 }
+.library-open-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  background: transparent;
+  transition:
+    color 0.15s ease,
+    border-color 0.15s ease,
+    background-color 0.15s ease;
+}
+.library-open-tab:hover {
+  color: var(--foreground);
+  border-color: var(--muted);
+  background: var(--surface-secondary);
+}
 .image-download {
   display: inline-flex;
   align-items: center;
