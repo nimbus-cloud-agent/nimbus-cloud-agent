@@ -70,6 +70,8 @@ jobs:
           context: .
           platforms: linux/amd64
           push: true
+          build-args: |
+            GIT_COMMIT=${{ github.sha }}
           tags: |
             ghcr.io/nimbus-cloud-agent/nimbus-cloud-agent:dev
             ghcr.io/nimbus-cloud-agent/nimbus-cloud-agent:${{ github.sha }}

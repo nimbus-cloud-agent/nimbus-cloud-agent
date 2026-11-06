@@ -21,7 +21,11 @@ type Config struct {
 	// gate; production deployments should use a stronger identity layer.
 	BasicUser, BasicPass string
 	LogLevel             string
-	DeployHandoff        bool
+	// Version identifies the deployed build (the image passes the commit
+	// SHA). It is reported by /api/health so an operator can tell which build
+	// an instance is actually running.
+	Version       string
+	DeployHandoff bool
 }
 
 func Command(run func(Config) error) *cobra.Command {
@@ -62,6 +66,7 @@ func Command(run func(Config) error) *cobra.Command {
 		c := Config{Addr: v.GetString("addr"), Postgres: v.GetString("postgres"), RuntimeCommand: v.GetString("runtime-command"), WorkDir: v.GetString("work-dir"), DeepSeekKey: v.GetString("deepseek-api-key"), E2BKey: v.GetString("e2b-api-key"), E2BTemplate: v.GetString("e2b-template"), PublicHost: v.GetString("public-host"), BasicUser: v.GetString("basic-user"), BasicPass: v.GetString("basic-pass")}
 		c.LogLevel = v.GetString("log-level")
 		c.DeployHandoff = v.GetBool("deploy-handoff")
+		c.Version = v.GetString("version")
 		if c.Postgres == "" {
 			return fmt.Errorf("--postgres, NIMBUS_POSTGRES, DATABASE_URL_UNPOOLED or DATABASE_URL is required")
 		}

@@ -37,7 +37,7 @@ func main() {
 		}
 		lifetime, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
-		slog.Info("Nimbus starting", "log_level", c.LogLevel, "deploy_handoff", c.DeployHandoff)
+		slog.Info("Nimbus starting", "log_level", c.LogLevel, "deploy_handoff", c.DeployHandoff, "version", c.Version)
 		runtime := executor.New(c.RuntimeCommand)
 		var db *store.Store
 		defer func() {

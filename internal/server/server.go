@@ -90,7 +90,7 @@ func New(c config.Config, st *store.Store, frontend fs.FS, runtime *executor.Run
 	r := gin.New()
 	r.Use(requestLogger(), recoveryLogger(), s.acceptRequest, s.basicAuth, s.guard)
 	r.GET("/api/health", func(c *gin.Context) {
-		c.JSON(200, gin.H{"ok": true, "runtime": s.R.Status(), "draining": s.ctx.Err() != nil})
+		c.JSON(200, gin.H{"ok": true, "version": s.C.Version, "runtime": s.R.Status(), "draining": s.ctx.Err() != nil})
 	})
 	s.routes(r)
 	r.NoRoute(func(c *gin.Context) {

@@ -52,8 +52,12 @@ RUN apt-get update \
     && test -s /etc/ssl/certs/ca-certificates.crt \
     && rm -rf /var/lib/apt/lists/* \
     && useradd -m -u 10001 nimbus
+# The commit this image was built from; reported by /api/health and the
+# startup log so an operator can verify which build an instance runs.
+ARG GIT_COMMIT=dev
 ENV NIMBUS_LOG_LEVEL=debug \
-    NIMBUS_DEPLOY_HANDOFF=true
+    NIMBUS_DEPLOY_HANDOFF=true \
+    NIMBUS_VERSION=$GIT_COMMIT
 COPY --from=builder /src/bin/nimbus-cloud-agent /usr/local/bin/nimbus-cloud-agent
 COPY --from=builder /usr/local/lib/node_modules/nimbus-agent-runtime /usr/local/lib/node_modules/nimbus-agent-runtime
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
