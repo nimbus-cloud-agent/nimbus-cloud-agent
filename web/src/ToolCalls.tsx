@@ -18,7 +18,7 @@ import {
 import { Fold } from "./components";
 import { toolFailed, type ToolNode } from "./tool-events";
 
-function toolInfo(node: ToolNode) {
+function toolInfo(node: Pick<ToolNode, "name" | "args">) {
   const labels: Record<string, [string, typeof Cloud]> = {
     sandbox_start: ["Start sandbox", Cloud],
     sandbox_status: ["Sandbox status", Cloud],
@@ -44,6 +44,34 @@ function toolInfo(node: ToolNode) {
     "";
   return { label, Icon, detail: String(detail) };
 }
+
+/** Argument deltas are text, so this counts characters rather than bytes. */
+function sizeLabel(chars: number) {
+  return chars < 1000 ? `${chars} chars` : `${(chars / 1000).toFixed(1)}k chars`;
+}
+
+/**
+ * A call whose arguments are still streaming. Native tool/call events only
+ * exist once the whole call is assembled, so this row carries the progress in
+ * the meantime and is replaced by ToolCall when the call starts executing.
+ */
+export function PendingToolCall({ name, chars }: { name: string; chars: number }) {
+  const { label, Icon } = toolInfo({ name, args: { formatted: "{}" } });
+  return (
+    <div className="tool-call" data-state="running">
+      <div className="tool-row pending-tool">
+        <Icon size={15} className="tool-row-icon" />
+        <span className="tool-row-label">{label}</span>
+        <span className="tool-row-summary">Receiving arguments</span>
+        <span className="tool-row-state">
+          <LoaderCircle size={13} className="spin" />
+          <span>{sizeLabel(chars)}</span>
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function CodeSection({
   label,
   value,

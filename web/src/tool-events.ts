@@ -87,3 +87,26 @@ export function buildToolTree(
 export function flattenTools(nodes: ToolNode[]): ToolNode[] {
   return nodes.flatMap((n) => [n, ...flattenTools(n.children)]);
 }
+
+/**
+ * Calls whose arguments are still arriving. Frames carry the deltas while no
+ * native tool/call event exists yet, so this is the only progress signal for
+ * the seconds a large argument takes to stream.
+ */
+export function streamingToolCalls(
+  frames: StreamFrame[],
+  landed: Set<string>,
+): { id: string; name: string; chars: number }[] {
+  const calls = new Map<string, { name: string; chars: number }>();
+  for (const f of frames) {
+    const chunk = f.payload.chunk;
+    if (chunk?.type !== "tool-call-delta" || !chunk.id) continue;
+    const call = calls.get(chunk.id) ?? { name: "tool", chars: 0 };
+    if (chunk.name) call.name = chunk.name;
+    call.chars += chunk.argumentsDelta?.length ?? 0;
+    calls.set(chunk.id, call);
+  }
+  return [...calls]
+    .filter(([id]) => !landed.has(id))
+    .map(([id, call]) => ({ id, ...call }));
+}

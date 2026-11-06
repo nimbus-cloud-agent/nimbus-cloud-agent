@@ -109,7 +109,15 @@ export type StreamFrame = {
     text?: string;
     step?: number;
     turn?: number;
-    chunk?: { type: string; text?: string; reasoning?: string };
+    chunk?: {
+      type: string;
+      text?: string;
+      reasoning?: string;
+      id?: string;
+      name?: string;
+      index?: number;
+      argumentsDelta?: string;
+    };
     outcome?: { seq?: number };
   };
 };

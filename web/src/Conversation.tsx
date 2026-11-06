@@ -18,10 +18,11 @@ import {
   type StreamFrame,
 } from "./api";
 import ImageGallery from "./ImageGallery";
-import { ToolCall, ExecutionProcess } from "./ToolCalls";
+import { ToolCall, ExecutionProcess, PendingToolCall } from "./ToolCalls";
 import {
   buildToolTree,
   flattenTools,
+  streamingToolCalls,
   contentText as text,
 } from "./tool-events";
 
@@ -61,7 +62,8 @@ export default function Conversation({
             ended?: number;
           }
         >();
-        for (const f of frames.filter((f) => f.turn_id === o.turn_id)) {
+        const turnFrames = frames.filter((f) => f.turn_id === o.turn_id);
+        for (const f of turnFrames) {
           const p = f.payload;
           if (!p.attemptId) continue;
           let st = streams.get(p.attemptId);
@@ -102,11 +104,10 @@ export default function Conversation({
                   e.payload.data.turn === st.turn),
             ),
         );
-        const tools = buildToolTree(
-          rows,
-          frames.filter((f) => f.turn_id === o.turn_id),
-        );
+        const tools = buildToolTree(rows, turnFrames);
         const allTools = flattenTools(tools);
+        const landed = new Set(allTools.map((tool) => tool.id));
+        const streaming = streamingToolCalls(turnFrames, landed);
         const bySeq = new Map(tools.map((tool) => [tool.seq, tool]));
         const lastToolSeq = Math.max(-1, ...allTools.map((t) => t.seq));
         const finalMessage = [...assistants]
@@ -272,6 +273,15 @@ export default function Conversation({
                   plan={failedReview.tool?.args.plan ?? ""}
                 />
               )}
+              {!o.outcome &&
+                o.status !== "failed" &&
+                streaming.map((call) => (
+                  <PendingToolCall
+                    key={call.id}
+                    name={call.name}
+                    chars={call.chars}
+                  />
+                ))}
               {!o.outcome && o.status !== "failed" && (
                 <div className="activity">
                   <span className="pulse" />
@@ -279,9 +289,11 @@ export default function Conversation({
                     (q) => q.turn_id === o.turn_id && q.status === "pending",
                   )
                     ? "Waiting for your plan approval"
-                    : calls.length > results.length
-                      ? "Running tools"
-                      : "Thinking and responding"}
+                    : streaming.length > 0
+                      ? "Streaming tool arguments"
+                      : calls.length > results.length
+                        ? "Running tools"
+                        : "Thinking and responding"}
                   <span>Output saved in real time</span>
                 </div>
               )}

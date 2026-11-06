@@ -1165,6 +1165,13 @@ pre {
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
+/* A call whose arguments are still streaming: same row metrics as the tool
+   disclosure it becomes, without the accordion. */
+.pending-tool {
+  min-height: 36px;
+  padding: 7px 8px;
+  border-radius: 6px;
+}
 .tool-call[data-state="done"]
   > .tool-disclosure
   > .accordion__item
