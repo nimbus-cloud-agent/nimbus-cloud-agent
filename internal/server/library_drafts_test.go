@@ -86,3 +86,15 @@ func TestLibraryEditEndpointsReportConflicts(t *testing.T) {
 		t.Fatalf("draft delete: %d", status)
 	}
 }
+
+// Every library tool the runtime exposes must pass the dispatcher's allowlist;
+// a tool missing here fails at runtime as "unknown or forbidden tool".
+func TestLibraryToolsReachTheDispatcher(t *testing.T) {
+	s, _ := libraryServer(t)
+	for _, name := range []string{"library_list", "library_read", "library_write", "library_versions", "library_drafts"} {
+		_, err := s.executeTool(context.Background(), toolScope{SessionID: "session", TurnID: "turn"}, model.ToolCall{Name: name, CallID: "call"})
+		if err != nil && strings.Contains(err.Error(), "unknown or forbidden tool") {
+			t.Fatalf("%s is not dispatched: %v", name, err)
+		}
+	}
+}

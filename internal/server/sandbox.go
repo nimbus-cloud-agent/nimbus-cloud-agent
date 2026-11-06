@@ -187,7 +187,7 @@ func (s *Server) executeTool(ctx context.Context, scope toolScope, in model.Tool
 	}
 	switch in.Name {
 	case "sandbox_status", "sandbox_start", "sandbox_exec", "sandbox_read_file", "sandbox_write_file",
-		"library_list", "library_read", "library_write", "library_versions", "library_copy_to_sandbox", "library_copy_from_sandbox":
+		"library_list", "library_read", "library_write", "library_versions", "library_drafts", "library_copy_to_sandbox", "library_copy_from_sandbox":
 	default:
 		return model.ToolResult{}, fmt.Errorf("unknown or forbidden tool")
 	}
