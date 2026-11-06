@@ -187,7 +187,10 @@ func TestLibraryMigrationCreatesTables(t *testing.T) {
 		}
 	}
 	var indexCount int64
-	if err := s.db.WithContext(ctx).Raw("SELECT count(*) FROM pg_indexes WHERE tablename='file_versions' AND indexname='idx_file_versions_file_id'").Scan(&indexCount).Error; err != nil || indexCount != 1 {
+	// pg_indexes is database-wide, and other test packages run concurrently
+	// in their own schemas on the same database, so scope the check to
+	// this connection's schema.
+	if err := s.db.WithContext(ctx).Raw("SELECT count(*) FROM pg_indexes WHERE schemaname = current_schema() AND tablename='file_versions' AND indexname='idx_file_versions_file_id'").Scan(&indexCount).Error; err != nil || indexCount != 1 {
 		t.Fatalf("file_versions index missing: %d, %v", indexCount, err)
 	}
 }
