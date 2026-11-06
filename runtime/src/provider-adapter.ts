@@ -5,6 +5,7 @@ import type {
   StreamChunk,
 } from "@deepseek-ai/dsh-llm";
 import type { ModelDiagnostic, ModelErrorDiagnostic } from "./generated/types.js";
+import { type ImageAccess, withoutMissingImages } from "./request-images.js";
 
 // Harness normalizes a provider exception into a durable `LlmFailure` that keeps
 // only `message` and `code`, so a transport outage reaches the control plane as
@@ -23,7 +24,8 @@ type AdapterRegistry = {
   ): AdapterRegistrationHandle;
 };
 
-export async function withModelDiagnostics(
+export async function withProviderAdapter(
+  attachments: ImageAccess,
   llm: AdapterRegistry,
   apiKey: string,
   emit: (diagnostic: ModelDiagnostic) => Promise<void>,
@@ -91,6 +93,15 @@ export async function withModelDiagnostics(
       if (!done) await iterator.return?.();
     }
   };
+  // Sanitizing here covers history replay and the current upload alike, and
+  // runs inside the instrumented iterator so a lost attachment never surfaces
+  // as a provider failure.
+  const sanitized = async function* (
+    options: GenerateOptions,
+    open: (options: GenerateOptions) => AsyncIterable<StreamChunk>,
+  ): AsyncGenerator<StreamChunk> {
+    yield* open(await withoutMissingImages(attachments, options));
+  };
   // `prepareCall` is the only route the agent loop takes and its returned
   // `stream` closure bypasses `adapter.stream`, so both are instrumented.
   const instrument = (adapter: LlmAdapter): LlmAdapter => {
@@ -116,10 +127,11 @@ export async function withModelDiagnostics(
       return {
         ...prepared,
         stream: (options) =>
-          track(prepared.stream(options), options, attempt),
+          track(sanitized(options, prepared.stream), options, attempt),
       };
     };
-    adapter.stream = (options) => track(stream(options), options, ++attempts);
+    adapter.stream = (options) =>
+      track(sanitized(options, stream), options, ++attempts);
     return adapter;
   };
   llm.registerAdapter = (providers, adapter) =>

@@ -1,16 +1,23 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import type {
-  AdapterRegistrationHandle,
-  GenerateOptions,
-  LlmAdapter,
+import {
+  MessageId,
+  type AdapterRegistrationHandle,
+  type GenerateOptions,
+  type LlmAdapter,
+  type RequestMessage,
 } from "@deepseek-ai/dsh-llm";
 import {
   DeepSeekAdapter,
   resolveAdapterOptions,
   type DeepSeekAdapterOptions,
 } from "@deepseek-ai/dsh-llm-deepseek";
-import { withModelDiagnostics } from "../src/model-diagnostics.js";
+import { withProviderAdapter } from "../src/provider-adapter.js";
+import { withoutMissingImages } from "../src/request-images.js";
+import {
+  AttachmentId,
+  type ImageAttachmentRef,
+} from "@deepseek-ai/dsh-attachment";
 import type { ModelDiagnostic } from "../src/generated/types.js";
 
 const SECRET = "sk-diagnostic-placeholder";
@@ -38,7 +45,10 @@ function deepseek(overrides: Partial<{ stream: LlmAdapter["stream"] }> = {}) {
   return adapter;
 }
 
-async function instrumented(adapter: LlmAdapter) {
+async function instrumented(
+  adapter: LlmAdapter,
+  imageHostPath: (ref: ImageAttachmentRef) => string | undefined = () => undefined,
+) {
   const emitted: ModelDiagnostic[] = [];
   const registry = {
     registerAdapter(
@@ -49,7 +59,8 @@ async function instrumented(adapter: LlmAdapter) {
       return Object.assign(() => {}, { replace() {} });
     },
   };
-  await withModelDiagnostics(
+  await withProviderAdapter(
+    { imageHostPath },
     registry,
     SECRET,
     async (diagnostic) => {
@@ -60,6 +71,30 @@ async function instrumented(adapter: LlmAdapter) {
     },
   );
   return { emitted, adapter };
+}
+
+// The store is stubbed in these tests, so the opaque id never has to resolve.
+function imageRef(name: string): ImageAttachmentRef {
+  return {
+    attachmentId: AttachmentId(`sha256:${name}`),
+    mediaType: "image/png",
+    bytes: 1,
+    width: 1,
+    height: 1,
+    name,
+  };
+}
+
+function imageMessage(name: string, text = "what is this"): RequestMessage {
+  return {
+    id: MessageId(`message-${name}`),
+    role: "user",
+    source: { kind: "user" },
+    content: [
+      { type: "image", attachment: imageRef(name) },
+      { type: "text", text },
+    ],
+  };
 }
 
 async function drain(chunks: AsyncIterable<unknown>) {
@@ -180,4 +215,62 @@ test("oversized error text is bounded and flagged", async () => {
   const [entry] = emitted[0].error_chain;
   assert.equal(emitted[0].truncated, true);
   assert.equal(entry.message?.length, 161);
+});
+
+test("a lost attachment is replaced by text instead of failing the request", async () => {
+  const { emitted, adapter } = await instrumented(
+    deepseek(),
+    () => "/nonexistent/lost.png",
+  );
+  const original = globalThis.fetch;
+  let body = "";
+  globalThis.fetch = async (input, init) => {
+    body = init?.body ? String(init.body) : await new Request(input).text();
+    throw new TypeError("stop after serialization");
+  };
+  try {
+    await assert.rejects(
+      drain(
+        adapter.stream({
+          ...request,
+          messages: [imageMessage("lost.png"), imageMessage("also-lost.png")],
+        }),
+      ),
+    );
+  } finally {
+    globalThis.fetch = original;
+  }
+  assert.match(body, /image unavailable/);
+  assert.doesNotMatch(body, /"type":"image"/);
+  // The request reached the provider: the failure is the transport, not the store.
+  assert.equal(emitted[0].phase, "request");
+  assert.equal(emitted[0].error_chain.at(-1)?.message, "stop after serialization");
+});
+
+test("readable attachments and offloaded placeholders are sent unchanged", async () => {
+  const { mkdtemp, writeFile } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const dir = await mkdtemp(join(tmpdir(), "nimbus-image-"));
+  const present = join(dir, "present.png");
+  await writeFile(present, "png");
+  const ref = imageRef("present.png");
+  const offloaded = { ...imageRef("gone.png"), name: "gone.png" };
+  const options = {
+    ...request,
+    messages: [
+      {
+        ...imageMessage("present.png"),
+        content: [
+          { type: "image" as const, attachment: ref },
+          { type: "image" as const, attachment: offloaded, offloaded: true as const },
+        ],
+      },
+    ],
+  };
+  const result = await withoutMissingImages(
+    { imageHostPath: (candidate) => (candidate === ref ? present : join(dir, "missing.png")) },
+    options,
+  );
+  assert.equal(result, options);
 });
