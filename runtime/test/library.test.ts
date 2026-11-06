@@ -14,6 +14,7 @@ const LIBRARY_NAMES = [
   "library_read",
   "library_write",
   "library_versions",
+  "library_drafts",
   "library_copy_to_sandbox",
   "library_copy_from_sandbox",
 ];
@@ -57,6 +58,9 @@ test("library tools are defined with the contracted names and schemas", () => {
   assert.match(write[1], /nimbus:\/\/library\/<id>/);
   assert.deepEqual(definition("library_list")[3], []);
   assert.deepEqual(definition("library_versions")[3], []);
+  const drafts = definition("library_drafts");
+  assert.deepEqual(Object.keys(drafts[2]), ["id"]);
+  assert.deepEqual(drafts[3], []);
   assert.deepEqual(definition("library_copy_to_sandbox")[3], ["path"]);
   assert.deepEqual(definition("library_copy_from_sandbox")[3], ["path"]);
   assert.match(definition("library_copy_to_sandbox")[1], /1 MiB chunks/);

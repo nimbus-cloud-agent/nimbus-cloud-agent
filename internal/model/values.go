@@ -219,6 +219,25 @@ type LibraryArgs struct {
 	Path     string `json:"path,omitempty"`
 	Content  string `json:"content,omitempty"`
 	MimeType string `json:"mime_type,omitempty"`
+	// BaseVersion is the version the caller based its content on: 0 creates a
+	// new file, any other value must be the file's current version.
+	BaseVersion int64 `json:"base_version,omitempty"`
+	// DraftID names the user's draft this write resolves, if any.
+	DraftID string `json:"draft_id,omitempty"`
+}
+
+// LibraryDraftSummary is one open draft saved by a user after a version
+// conflict. Content is only populated when one draft is read directly.
+type LibraryDraftSummary struct {
+	ID             string    `json:"id"`
+	FileID         string    `json:"file_id"`
+	FileName       string    `json:"file_name"`
+	BaseVersion    int64     `json:"base_version"`
+	CurrentVersion int64     `json:"current_version"`
+	MimeType       string    `json:"mime_type"`
+	SizeBytes      int64     `json:"size_bytes"`
+	Content        string    `json:"content,omitempty"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 // LibraryFileSummary is one entry of a library_list result.
@@ -261,6 +280,8 @@ type LibraryResult struct {
 	Image     *LibraryImage           `json:"image,omitempty"`
 	Files     []LibraryFileSummary    `json:"files,omitempty"`
 	Versions  []LibraryVersionSummary `json:"versions,omitempty"`
+	Drafts    []LibraryDraftSummary   `json:"drafts,omitempty"`
+	Draft     *LibraryDraftSummary    `json:"draft,omitempty"`
 	Path      string                  `json:"path,omitempty"`
 	Bytes     int64                   `json:"bytes,omitempty"`
 	Link      string                  `json:"link,omitempty"`

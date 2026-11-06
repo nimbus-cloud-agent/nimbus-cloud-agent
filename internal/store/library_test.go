@@ -199,7 +199,7 @@ func TestLibraryWriteCreatesVersions(t *testing.T) {
 	s := libraryStore(t)
 	ctx := context.Background()
 	content := strings.Repeat("hello library\n", 100)
-	file, v1, err := s.WriteLibraryFile(ctx, "notes.md", "", strings.NewReader(content))
+	file, v1, err := s.WriteLibraryFile(ctx, "notes.md", "", strings.NewReader(content), 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -245,18 +245,18 @@ func TestLibraryWriteCreatesVersions(t *testing.T) {
 func TestLibraryWriteKeepsMimeUnlessOverridden(t *testing.T) {
 	s := libraryStore(t)
 	ctx := context.Background()
-	file, _, err := s.WriteLibraryFile(ctx, "data.txt", "application/custom", strings.NewReader("one"))
+	file, _, err := s.WriteLibraryFile(ctx, "data.txt", "application/custom", strings.NewReader("one"), 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if file.MimeType != "application/custom" {
 		t.Fatalf("override lost: %s", file.MimeType)
 	}
-	file, _, err = s.WriteLibraryFile(ctx, "data.txt", "", strings.NewReader("two"))
+	file, _, err = s.WriteLibraryFile(ctx, "data.txt", "", strings.NewReader("two"), 1)
 	if err != nil || file.MimeType != "application/custom" {
 		t.Fatalf("rewrite without override changed mime: %+v, %v", file, err)
 	}
-	file, _, err = s.WriteLibraryFile(ctx, "data.txt", "text/plain", strings.NewReader("three"))
+	file, _, err = s.WriteLibraryFile(ctx, "data.txt", "text/plain", strings.NewReader("three"), 2)
 	if err != nil || file.MimeType != "text/plain" {
 		t.Fatalf("explicit override did not change mime: %+v, %v", file, err)
 	}
@@ -266,12 +266,12 @@ func TestLibraryListOrdersByUpdatedAt(t *testing.T) {
 	s := libraryStore(t)
 	ctx := context.Background()
 	for _, name := range []string{"a.txt", "b.txt", "c.txt"} {
-		if _, _, err := s.WriteLibraryFile(ctx, name, "", strings.NewReader(name)); err != nil {
+		if _, _, err := s.WriteLibraryFile(ctx, name, "", strings.NewReader(name), 0); err != nil {
 			t.Fatal(err)
 		}
 	}
 	// Rewriting a.txt makes it the most recently updated.
-	if _, _, err := s.WriteLibraryFile(ctx, "a.txt", "", strings.NewReader("again")); err != nil {
+	if _, _, err := s.WriteLibraryFile(ctx, "a.txt", "", strings.NewReader("again"), 1); err != nil {
 		t.Fatal(err)
 	}
 	rows, err := s.LibraryFiles(ctx)
@@ -287,7 +287,7 @@ func TestReadVersionRangeAcrossChunks(t *testing.T) {
 	for i := range data {
 		data[i] = byte(i % 251)
 	}
-	_, version, err := s.WriteLibraryFile(ctx, "big.bin", "", bytes.NewReader(data))
+	_, version, err := s.WriteLibraryFile(ctx, "big.bin", "", bytes.NewReader(data), 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -335,7 +335,7 @@ func (r *cappedReader) Read(p []byte) (int, error) {
 func TestLibraryWriteEnforcesSizeCapWhileStreaming(t *testing.T) {
 	s := libraryStore(t)
 	ctx := context.Background()
-	if _, _, err := s.WriteLibraryFile(ctx, "too-big.bin", "", &cappedReader{chunks: LibraryMaxFileSize/LibraryChunkSize + 1}); err == nil || !strings.Contains(err.Error(), "exceeds") {
+	if _, _, err := s.WriteLibraryFile(ctx, "too-big.bin", "", &cappedReader{chunks: LibraryMaxFileSize/LibraryChunkSize + 1}, 0); err == nil || !strings.Contains(err.Error(), "exceeds") {
 		t.Fatalf("oversize write accepted: %v", err)
 	}
 	// The failed write rolled back: no file row survives.
@@ -343,7 +343,7 @@ func TestLibraryWriteEnforcesSizeCapWhileStreaming(t *testing.T) {
 		t.Fatalf("failed write left a file row: %v", err)
 	}
 	// Exactly at the cap still succeeds.
-	file, version, err := s.WriteLibraryFile(ctx, "at-cap.bin", "", &cappedReader{chunks: LibraryMaxFileSize / LibraryChunkSize})
+	file, version, err := s.WriteLibraryFile(ctx, "at-cap.bin", "", &cappedReader{chunks: LibraryMaxFileSize / LibraryChunkSize}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

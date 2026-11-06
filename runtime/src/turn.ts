@@ -83,9 +83,21 @@ export const libraryToolDefinitions: [
   ],
   [
     "library_write",
-    "Save a finished user-facing file (HTML page, Markdown document, image, or other file) to the Library and get its shareable link (nimbus://library/<id>). Every write creates a new immutable version; older versions are kept. Maximum 100 MB per file. Use this only for finished deliverables the user should see — working files, scripts, and intermediate data stay in the session sandbox.",
-    { name: libraryStr, content: libraryStr, mime_type: libraryStr },
+    "Save a finished user-facing file (HTML page, Markdown document, image, or other file) to the Library and get its shareable link (nimbus://library/<id>). Every write creates a new immutable version; older versions are kept. Maximum 100 MB per file. Omit base_version only for a brand-new file: to update an existing file pass the version you based your edit on. A stale base_version fails with a version conflict, so read the current version, merge your changes into it, and retry with base_version set to that version — never retry the same base_version. Pass draft_id when publishing a user's draft so the draft is cleared. Use this only for finished deliverables the user should see — working files, scripts, and intermediate data stay in the session sandbox.",
+    {
+      name: libraryStr,
+      content: libraryStr,
+      mime_type: libraryStr,
+      base_version: libraryNum,
+      draft_id: libraryStr,
+    },
     ["name", "content"],
+  ],
+  [
+    "library_drafts",
+    "List open draft versions users saved after a Library version conflict, with id, file name, base_version (the version the user edited), current_version, size, and update time. Pass id to read one draft's full text. To resolve a draft: read the file's current version and the draft, merge both sides' changes, then call library_write with base_version set to current_version and draft_id set to the draft id.",
+    { id: libraryStr },
+    [],
   ],
   [
     "library_versions",
@@ -107,13 +119,18 @@ export const libraryToolDefinitions: [
   [
     "library_copy_from_sandbox",
     "Copy a file from the session sandbox into the Library in one call, creating a new version under the given name (defaults to the sandbox file's name). The host streams the file in 1 MiB chunks; your code never handles chunking. Use this to publish a finished file that was built in the sandbox. Maximum 100 MB per file.",
-    { path: libraryStr, name: libraryStr, mime_type: libraryStr },
+    {
+      path: libraryStr,
+      name: libraryStr,
+      mime_type: libraryStr,
+      base_version: libraryNum,
+    },
     ["path"],
   ],
 ];
 
 export const librarySystemPrompt =
-  "The Library is a global, PostgreSQL-backed, versioned file store for finished user-facing files — HTML pages, Markdown documents, and images. It is where finished work is published, not where work happens. When you finish a deliverable the user should see and keep, save it with library_write or library_copy_from_sandbox and use the returned link in a clickable Markdown link, for example [Preview the page](nimbus://library/<id>). Use a descriptive label such as the file name; do not wrap the preview link in backticks or a code block, and do not invent file ids. The user clicks this Markdown link to preview the file in a modal. Working files, scripts, and intermediate data stay in the session sandbox through the sandbox_* tools: the sandbox is the workbench, the Library is the shelf for finished deliverables. Do not store sandbox working files in the Library, and do not use the Library as scratch space. Every library_write creates a new immutable version of the file and older versions are kept; list them with library_versions and read an older one by passing version to library_read. List current files with library_list. Read text by byte range with library_read (offset/length); one text read returns at most 1 MiB, so page through larger files with offset. Images read with library_read are shown to you directly, so describe what is in them. Images over 5 MiB cannot be read this way — copy them to the sandbox with library_copy_to_sandbox instead. Other binary files cannot be read as text. Move files between the Library and the sandbox in one call with library_copy_to_sandbox and library_copy_from_sandbox — the host streams the file in 1 MiB chunks for you, so your code must never handle chunking, streaming, backpressure, or retries. Caps: 100 MB per file; 1 MiB per text read; 5 MiB per image read.";
+  "The Library is a global, PostgreSQL-backed, versioned file store for finished user-facing files — HTML pages, Markdown documents, and images. It is where finished work is published, not where work happens. When you finish a deliverable the user should see and keep, save it with library_write or library_copy_from_sandbox and use the returned link in a clickable Markdown link, for example [Preview the page](nimbus://library/<id>). Use a descriptive label such as the file name; do not wrap the preview link in backticks or a code block, and do not invent file ids. The user clicks this Markdown link to preview the file in a modal. Version conflicts are expected: a user may edit the same file in the browser. A write based on an outdated version fails; re-read the file, merge both sides, and retry with the current version. When the user saved a conflicting edit as a draft, library_drafts lists it and reading it returns the text; preserve both sides' intent, publish with base_version equal to the file's current version, and pass the draft id so the draft is cleared. Working files, scripts, and intermediate data stay in the session sandbox through the sandbox_* tools: the sandbox is the workbench, the Library is the shelf for finished deliverables. Do not store sandbox working files in the Library, and do not use the Library as scratch space. Every library_write creates a new immutable version of the file and older versions are kept; list them with library_versions and read an older one by passing version to library_read. List current files with library_list. Read text by byte range with library_read (offset/length); one text read returns at most 1 MiB, so page through larger files with offset. Images read with library_read are shown to you directly, so describe what is in them. Images over 5 MiB cannot be read this way — copy them to the sandbox with library_copy_to_sandbox instead. Other binary files cannot be read as text. Move files between the Library and the sandbox in one call with library_copy_to_sandbox and library_copy_from_sandbox — the host streams the file in 1 MiB chunks for you, so your code must never handle chunking, streaming, backpressure, or retries. Caps: 100 MB per file; 1 MiB per text read; 5 MiB per image read.";
 
 /** Image payload of a Go library_read result: base64 data, replaced below. */
 export interface LibraryReadImage {

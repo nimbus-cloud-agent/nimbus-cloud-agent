@@ -216,6 +216,9 @@ func (s *Server) executeTool(ctx context.Context, scope toolScope, in model.Tool
 	case "library_versions":
 		result, err := s.libraryVersions(ctx, in.Library)
 		return model.ToolResult{Library: &result}, err
+	case "library_drafts":
+		result, err := s.libraryDrafts(ctx, in.Library)
+		return model.ToolResult{Library: &result}, err
 	}
 	lock := s.lock(scope.SessionID)
 	lock.Lock()

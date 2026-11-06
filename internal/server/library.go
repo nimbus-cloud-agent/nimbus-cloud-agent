@@ -81,6 +81,180 @@ func (s *Server) libraryRoutes(r *gin.Engine) {
 		reader := store.NewVersionReader(c.Request.Context(), s.S, version.ID, version.SizeBytes)
 		c.DataFromReader(200, version.SizeBytes, file.MimeType, reader, headers)
 	})
+	for _, method := range []string{"POST", "PUT"} {
+		r.Handle(method, "/api/library/:id/versions", func(c *gin.Context) {
+			file, ok := s.editableLibraryFile(c)
+			if !ok {
+				return
+			}
+			var in struct {
+				BaseVersion int64  `json:"base_version"`
+				Content     string `json:"content"`
+			}
+			if err := c.ShouldBindJSON(&in); err != nil {
+				s.fail(c, 400, err)
+				return
+			}
+			if in.BaseVersion < 1 {
+				s.fail(c, 400, fmt.Errorf("base_version is required to update a file"))
+				return
+			}
+			if message := editContentError(in.Content); message != "" {
+				s.fail(c, 400, errors.New(message))
+				return
+			}
+			_, version, err := s.S.WriteLibraryFile(c.Request.Context(), file.Name, file.MimeType, strings.NewReader(in.Content), in.BaseVersion)
+			var conflict *store.VersionConflict
+			if errors.As(err, &conflict) {
+				c.JSON(409, gin.H{"error": conflict.Error(), "current_version": conflict.Current})
+				return
+			}
+			if err != nil {
+				s.fail(c, 500, err)
+				return
+			}
+			c.JSON(201, gin.H{"version": version.VersionNumber, "size_bytes": version.SizeBytes, "sha256": version.SHA256, "updated_at": version.CreatedAt})
+		})
+	}
+	r.GET("/api/library/:id/draft", func(c *gin.Context) {
+		file, ok := s.editableLibraryFile(c)
+		if !ok {
+			return
+		}
+		draft, err := s.S.LibraryDraftByFile(c.Request.Context(), file.ID)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				c.Status(404)
+				return
+			}
+			s.fail(c, 500, err)
+			return
+		}
+		view, err := s.libraryDraftView(c.Request.Context(), draft)
+		if err != nil {
+			s.fail(c, 500, err)
+			return
+		}
+		c.JSON(200, view)
+	})
+	r.POST("/api/library/:id/draft", func(c *gin.Context) {
+		file, ok := s.editableLibraryFile(c)
+		if !ok {
+			return
+		}
+		var in struct {
+			BaseVersion int64  `json:"base_version"`
+			Content     string `json:"content"`
+		}
+		if err := c.ShouldBindJSON(&in); err != nil {
+			s.fail(c, 400, err)
+			return
+		}
+		if in.BaseVersion < 1 {
+			s.fail(c, 400, fmt.Errorf("base_version is required to save a draft"))
+			return
+		}
+		if message := editContentError(in.Content); message != "" {
+			s.fail(c, 400, errors.New(message))
+			return
+		}
+		draft, err := s.S.SaveLibraryDraft(c.Request.Context(), file.ID, int(in.BaseVersion), file.MimeType, in.Content)
+		if err != nil {
+			s.fail(c, 500, err)
+			return
+		}
+		view, err := s.libraryDraftView(c.Request.Context(), draft)
+		if err != nil {
+			s.fail(c, 500, err)
+			return
+		}
+		c.JSON(201, view)
+	})
+	r.DELETE("/api/library/:id/draft", func(c *gin.Context) {
+		file, ok := s.editableLibraryFile(c)
+		if !ok {
+			return
+		}
+		draft, err := s.S.LibraryDraftByFile(c.Request.Context(), file.ID)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				c.Status(204)
+				return
+			}
+			s.fail(c, 500, err)
+			return
+		}
+		if err = s.S.DeleteLibraryDraft(c.Request.Context(), draft.ID); err != nil {
+			s.fail(c, 500, err)
+			return
+		}
+		c.Status(204)
+	})
+}
+
+// libraryEditMaxText is the largest text file the browser editor accepts;
+// larger files stay download-only so the modal never loads a huge document.
+const libraryEditMaxText = 2 << 20
+
+func editContentError(content string) string {
+	if int64(len(content)) > libraryEditMaxText {
+		return fmt.Sprintf("edits are limited to %d bytes", libraryEditMaxText)
+	}
+	if !utf8.ValidString(content) {
+		return "content must be valid UTF-8 text"
+	}
+	return ""
+}
+
+// editableLibraryFile resolves :id for the browser editor and refuses files
+// that are not text.
+func (s *Server) editableLibraryFile(c *gin.Context) (store.LibraryFile, bool) {
+	id := c.Param("id")
+	if _, err := uuid.Parse(id); err != nil {
+		c.Status(404)
+		return store.LibraryFile{}, false
+	}
+	file, err := s.S.LibraryFile(c.Request.Context(), id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			c.Status(404)
+			return store.LibraryFile{}, false
+		}
+		s.fail(c, 500, err)
+		return store.LibraryFile{}, false
+	}
+	if !store.IsTextMime(file.MimeType) {
+		s.fail(c, 400, fmt.Errorf("only text files can be edited"))
+		return store.LibraryFile{}, false
+	}
+	return file, true
+}
+
+type libraryDraftView struct {
+	ID             string    `json:"id"`
+	FileID         string    `json:"file_id"`
+	FileName       string    `json:"file_name"`
+	BaseVersion    int64     `json:"base_version"`
+	CurrentVersion int64     `json:"current_version"`
+	MimeType       string    `json:"mime_type"`
+	SizeBytes      int64     `json:"size_bytes"`
+	Content        string    `json:"content"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+}
+
+func (s *Server) libraryDraftView(ctx context.Context, draft store.LibraryDraft) (libraryDraftView, error) {
+	file, err := s.S.LibraryFile(ctx, draft.FileID)
+	if err != nil {
+		return libraryDraftView{}, err
+	}
+	view := libraryDraftView{ID: draft.ID, FileID: draft.FileID, FileName: file.Name, BaseVersion: int64(draft.BaseVersion), MimeType: draft.MimeType, SizeBytes: draft.SizeBytes, Content: draft.Content, CreatedAt: draft.CreatedAt, UpdatedAt: draft.UpdatedAt}
+	if file.CurrentVersionID != nil {
+		if current, err := s.S.FileVersionByID(ctx, *file.CurrentVersionID); err == nil {
+			view.CurrentVersion = int64(current.VersionNumber)
+		}
+	}
+	return view, nil
 }
 
 // libraryContentVersion resolves the ?version=N query for the content
@@ -250,11 +424,71 @@ func (s *Server) libraryWrite(ctx context.Context, args model.LibraryArgs) (mode
 	if int64(len(args.Content)) > store.LibraryMaxFileSize {
 		return model.LibraryResult{}, fmt.Errorf("library file exceeds %d bytes", store.LibraryMaxFileSize)
 	}
-	file, version, err := s.S.WriteLibraryFile(ctx, args.Name, args.MimeType, strings.NewReader(args.Content))
+	file, version, err := s.S.WriteLibraryFile(ctx, args.Name, args.MimeType, strings.NewReader(args.Content), args.BaseVersion)
+	if err != nil {
+		return model.LibraryResult{}, libraryWriteError(err)
+	}
+	if args.DraftID != "" {
+		if err := s.S.DeleteLibraryDraft(ctx, args.DraftID); err != nil {
+			return model.LibraryResult{}, err
+		}
+	}
+	return model.LibraryResult{ID: file.ID, Name: file.Name, Version: int64(version.VersionNumber), SizeBytes: version.SizeBytes, MimeType: file.MimeType, Link: libraryLink(file.ID), SHA256: version.SHA256}, nil
+}
+
+// libraryWriteError turns a stale-base conflict into the recovery steps the
+// agent must follow instead of retrying the same version.
+func libraryWriteError(err error) error {
+	var conflict *store.VersionConflict
+	if errors.As(err, &conflict) {
+		return fmt.Errorf("library version conflict: %s. Read the current version with library_read (library_versions lists the history), merge your changes into it, then call library_write again with base_version=%d. Never retry the same base version", conflict.Error(), conflict.Current)
+	}
+	return err
+}
+
+// libraryDrafts lists open drafts, or reads one in full when DraftID is set.
+func (s *Server) libraryDrafts(ctx context.Context, args model.LibraryArgs) (model.LibraryResult, error) {
+	if args.DraftID != "" {
+		draft, err := s.S.LibraryDraft(ctx, args.DraftID)
+		if err != nil {
+			return model.LibraryResult{}, err
+		}
+		summary, err := s.libraryDraftSummary(ctx, draft, true)
+		if err != nil {
+			return model.LibraryResult{}, err
+		}
+		return model.LibraryResult{Draft: &summary}, nil
+	}
+	rows, err := s.S.LibraryDrafts(ctx)
 	if err != nil {
 		return model.LibraryResult{}, err
 	}
-	return model.LibraryResult{ID: file.ID, Name: file.Name, Version: int64(version.VersionNumber), SizeBytes: version.SizeBytes, MimeType: file.MimeType, Link: libraryLink(file.ID), SHA256: version.SHA256}, nil
+	out := make([]model.LibraryDraftSummary, 0, len(rows))
+	for _, row := range rows {
+		summary, err := s.libraryDraftSummary(ctx, row, false)
+		if err != nil {
+			return model.LibraryResult{}, err
+		}
+		out = append(out, summary)
+	}
+	return model.LibraryResult{Drafts: out}, nil
+}
+
+func (s *Server) libraryDraftSummary(ctx context.Context, row store.LibraryDraft, includeContent bool) (model.LibraryDraftSummary, error) {
+	file, err := s.S.LibraryFile(ctx, row.FileID)
+	if err != nil {
+		return model.LibraryDraftSummary{}, err
+	}
+	summary := model.LibraryDraftSummary{ID: row.ID, FileID: row.FileID, FileName: file.Name, BaseVersion: int64(row.BaseVersion), MimeType: row.MimeType, SizeBytes: row.SizeBytes, UpdatedAt: row.UpdatedAt}
+	if includeContent {
+		summary.Content = row.Content
+	}
+	if file.CurrentVersionID != nil {
+		if current, err := s.S.FileVersionByID(ctx, *file.CurrentVersionID); err == nil {
+			summary.CurrentVersion = int64(current.VersionNumber)
+		}
+	}
+	return summary, nil
 }
 
 func (s *Server) libraryVersions(ctx context.Context, args model.LibraryArgs) (model.LibraryResult, error) {
@@ -314,9 +548,9 @@ func (s *Server) libraryCopyFromSandbox(ctx context.Context, sb model.Sandbox, a
 	// The store consumes the stream in 1 MiB chunks inside one transaction
 	// and enforces the cap again while reading, in case the file grows
 	// between Stat and the end of the stream.
-	file, version, err := s.S.WriteLibraryFile(ctx, name, args.MimeType, stream)
+	file, version, err := s.S.WriteLibraryFile(ctx, name, args.MimeType, stream, args.BaseVersion)
 	if err != nil {
-		return model.LibraryResult{}, err
+		return model.LibraryResult{}, libraryWriteError(err)
 	}
 	return model.LibraryResult{ID: file.ID, Name: file.Name, Version: int64(version.VersionNumber), SizeBytes: version.SizeBytes, Link: libraryLink(file.ID)}, nil
 }

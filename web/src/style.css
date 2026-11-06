@@ -2206,6 +2206,65 @@ pre {
 .library-preview-meta .select__trigger {
   min-width: 260px;
 }
+.library-editor {
+  width: 100%;
+  height: 62vh;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--surface);
+}
+.library-editor-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  font-size: 13px;
+}
+.library-edit-notice {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+.library-draft-banner {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-secondary);
+  font-size: 13px;
+}
+.library-draft-banner > span {
+  flex: 1;
+  min-width: 220px;
+}
+.library-draft-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.library-conflict {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+  background: var(--surface-secondary);
+  font-size: 13px;
+}
+.library-conflict p {
+  margin: 0;
+}
+.library-conflict-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
 .library-preview-frame {
   width: 100%;
   height: 62vh;

@@ -114,7 +114,7 @@ func TestLibraryHTTPListDetailContent(t *testing.T) {
 		t.Fatalf("empty list body: %s, %v", body, err)
 	}
 	content := "<h1>hello</h1>"
-	file, version, err := db.WriteLibraryFile(ctx, "page.html", "", strings.NewReader(content))
+	file, version, err := db.WriteLibraryFile(ctx, "page.html", "", strings.NewReader(content), 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +154,7 @@ func TestLibraryHTTPListDetailContent(t *testing.T) {
 		}
 	}
 	// A non-HTML file gets no CSP sandbox header.
-	if _, _, err := db.WriteLibraryFile(ctx, "notes.md", "", strings.NewReader("# hi")); err != nil {
+	if _, _, err := db.WriteLibraryFile(ctx, "notes.md", "", strings.NewReader("# hi"), 0); err != nil {
 		t.Fatal(err)
 	}
 	rows, err := db.LibraryFiles(ctx)
@@ -175,11 +175,11 @@ func TestLibraryHTTPVersionProjection(t *testing.T) {
 	db := optionsDB(t)
 	r := optionsRouter(db)
 	ctx := context.Background()
-	file, _, err := db.WriteLibraryFile(ctx, "history.md", "", strings.NewReader("first version"))
+	file, _, err := db.WriteLibraryFile(ctx, "history.md", "", strings.NewReader("first version"), 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := db.WriteLibraryFile(ctx, "history.md", "", strings.NewReader("second version")); err != nil {
+	if _, _, err := db.WriteLibraryFile(ctx, "history.md", "", strings.NewReader("second version"), 1); err != nil {
 		t.Fatal(err)
 	}
 	for _, query := range []string{"", "?include_versions=false"} {
@@ -230,8 +230,11 @@ func TestLibraryToolReadWriteVersions(t *testing.T) {
 	if err != nil || tail.Content != "line3\n" || tail.Truncated {
 		t.Fatalf("tail read: %+v, %v", tail, err)
 	}
-	if _, err := s.libraryWrite(ctx, model.LibraryArgs{Name: "notes.md", Content: "v2"}); err != nil {
+	if _, err := s.libraryWrite(ctx, model.LibraryArgs{Name: "notes.md", Content: "v2", BaseVersion: 1}); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := s.libraryWrite(ctx, model.LibraryArgs{Name: "notes.md", Content: "stale", BaseVersion: 1}); err == nil {
+		t.Fatal("stale base version was accepted")
 	}
 	old, err := s.libraryRead(ctx, model.LibraryArgs{Name: "notes.md", Version: 1})
 	if err != nil || old.Content != "line1\nline2\nline3\n" || old.Version != 1 {
@@ -263,7 +266,7 @@ func TestLibraryToolReadWriteVersions(t *testing.T) {
 	}
 	// An image file reads back as base64; a binary file refuses a text read.
 	png := []byte{0x89, 'P', 'N', 'G', 1, 2, 3}
-	if _, _, err := db.WriteLibraryFile(ctx, "pic.png", "", bytes.NewReader(png)); err != nil {
+	if _, _, err := db.WriteLibraryFile(ctx, "pic.png", "", bytes.NewReader(png), 0); err != nil {
 		t.Fatal(err)
 	}
 	img, err := s.libraryRead(ctx, model.LibraryArgs{Name: "pic.png"})
@@ -274,13 +277,13 @@ func TestLibraryToolReadWriteVersions(t *testing.T) {
 	// sandbox copy instead of sending a huge base64 payload to the agent.
 	bigPNG := make([]byte, store.LibraryMaxImageRead+1)
 	bigPNG[0] = 0x89
-	if _, _, err := db.WriteLibraryFile(ctx, "big.png", "", bytes.NewReader(bigPNG)); err != nil {
+	if _, _, err := db.WriteLibraryFile(ctx, "big.png", "", bytes.NewReader(bigPNG), 0); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.libraryRead(ctx, model.LibraryArgs{Name: "big.png"}); err == nil || !strings.Contains(err.Error(), "library_copy_to_sandbox") {
 		t.Fatalf("oversize image read: %v", err)
 	}
-	if _, _, err := db.WriteLibraryFile(ctx, "blob.bin", "", bytes.NewReader([]byte{1, 2, 3})); err != nil {
+	if _, _, err := db.WriteLibraryFile(ctx, "blob.bin", "", bytes.NewReader([]byte{1, 2, 3}), 0); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.libraryRead(ctx, model.LibraryArgs{Name: "blob.bin"}); err == nil || !strings.Contains(err.Error(), "library_copy_to_sandbox") {
@@ -296,7 +299,7 @@ func TestLibraryCopyToolsStreamThroughFakeSandbox(t *testing.T) {
 	// A multi-chunk file proves the copy streams instead of buffering one
 	// whole read: 2 full chunks plus a tail.
 	big := bytes.Repeat([]byte("b"), 2*store.LibraryChunkSize+5)
-	file, _, err := db.WriteLibraryFile(ctx, "big.bin", "", bytes.NewReader(big))
+	file, _, err := db.WriteLibraryFile(ctx, "big.bin", "", bytes.NewReader(big), 0)
 	if err != nil {
 		t.Fatal(err)
 	}

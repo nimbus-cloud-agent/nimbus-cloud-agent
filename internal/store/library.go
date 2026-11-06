@@ -204,12 +204,38 @@ func (s *Store) CreateFileVersion(ctx context.Context, fileID string, r io.Reade
 	return version, err
 }
 
+// VersionConflict reports a write based on a version that is no longer
+// current, so the caller can re-read and merge instead of overwriting someone
+// else's version.
+type VersionConflict struct {
+	Name    string
+	Base    int
+	Current int
+}
+
+func (e *VersionConflict) Error() string {
+	if e.Current == 0 {
+		return fmt.Sprintf("library file %q no longer exists", e.Name)
+	}
+	return fmt.Sprintf("library file %q is at version %d, not version %d", e.Name, e.Current, e.Base)
+}
+
+// libraryCurrentVersion reads a file's current version number inside the
+// caller's transaction; 0 means the file has no versions yet.
+func (s *Store) libraryCurrentVersion(ctx context.Context, fileID string) (int, error) {
+	var current int
+	row := s.db.WithContext(ctx).Table("file_versions").Where("file_id=?", fileID).Select("COALESCE(MAX(version_number),0)").Scan(&current)
+	return current, dbError(row.Error)
+}
+
 // WriteLibraryFile writes content under name, creating the file when the
 // name is new and otherwise appending a new version, all in one
-// transaction. An explicit mime type overrides the inferred one; without an
-// override a new file infers from its name and an existing file keeps its
-// stored type.
-func (s *Store) WriteLibraryFile(ctx context.Context, name, mimeType string, r io.Reader) (LibraryFile, FileVersion, error) {
+// transaction. baseVersion is the version the caller built its content on:
+// 0 creates a new file and must not match an existing name, any other value
+// must equal the file's current version or a *VersionConflict is returned.
+// An explicit mime type overrides the inferred one; without an override a
+// new file infers from its name and an existing file keeps its stored type.
+func (s *Store) WriteLibraryFile(ctx context.Context, name, mimeType string, r io.Reader, baseVersion int64) (LibraryFile, FileVersion, error) {
 	var file LibraryFile
 	var version FileVersion
 	err := s.Transaction(ctx, func(tx *Store) error {
@@ -219,6 +245,18 @@ func (s *Store) WriteLibraryFile(ctx context.Context, name, mimeType string, r i
 		}
 		if err == nil {
 			file = row
+			locked, err := tx.lockLibraryFile(ctx, name)
+			if err != nil {
+				return err
+			}
+			file = locked
+			current, err := tx.libraryCurrentVersion(ctx, file.ID)
+			if err != nil {
+				return err
+			}
+			if baseVersion != int64(current) {
+				return &VersionConflict{Name: file.Name, Base: int(baseVersion), Current: current}
+			}
 			if strings.TrimSpace(mimeType) != "" && mimeType != file.MimeType {
 				if err := tx.db.WithContext(ctx).Model(&LibraryFile{ID: file.ID}).Select("mime_type").Updates(&LibraryFile{MimeType: mimeType}).Error; err != nil {
 					return dbError(err)
@@ -226,6 +264,9 @@ func (s *Store) WriteLibraryFile(ctx context.Context, name, mimeType string, r i
 				file.MimeType = mimeType
 			}
 		} else {
+			if baseVersion != 0 {
+				return &VersionConflict{Name: name, Base: int(baseVersion), Current: 0}
+			}
 			now := time.Now()
 			file = LibraryFile{ID: uuid.NewString(), Name: name, MimeType: inferMimeType(name, mimeType), SizeBytes: 0, CreatedAt: now, UpdatedAt: now}
 			// ON CONFLICT DO NOTHING lets a concurrent writer for the same

@@ -1,14 +1,48 @@
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { Button, Modal } from "@heroui/react";
-import { Download, ExternalLink } from "lucide-react";
+import { Download, ExternalLink, Pencil } from "lucide-react";
 import {
+  ApiError,
+  deleteLibraryDraft,
+  getLibraryDraft,
   getLibraryFile,
   libraryContentUrl,
+  libraryText,
+  saveLibraryDraft,
+  saveLibraryVersion,
   type LibraryDetail,
+  type LibraryDraft,
   type LibraryVersion,
 } from "./api";
 import { Picker } from "./components";
+import { editorLanguage } from "./editor-language";
 import Rich from "./Rich";
+
+const MonacoEditor = lazy(() => import("./MonacoEditor"));
+// Mirrors the server's edit limit so the editor never asks to load more than
+// the modal can carry.
+const LIBRARY_EDIT_MAX_TEXT = 2 << 20;
+
+function agentPrompt(draft: LibraryDraft): string {
+  return (
+    `The Library file "${draft.file_name}" (${draft.file_id}) changed while I ` +
+    `was editing it: my edit is based on version ${draft.base_version}, but the ` +
+    `current version is ${draft.current_version}. I saved my edit as draft ` +
+    `${draft.id}. Please read the current version and that draft, merge both ` +
+    `sides' changes, resolve any conflicts, and publish the result with ` +
+    `library_write(name="${draft.file_name}", base_version=${draft.current_version}, ` +
+    `draft_id=${draft.id}).`
+  );
+}
+
+function isTextFile(mimeType: string): boolean {
+  const value = mimeType.toLowerCase();
+  return (
+    value.startsWith("text/") ||
+    value === "application/json" ||
+    value.endsWith("+json")
+  );
+}
 
 export function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
@@ -74,6 +108,17 @@ function OpenLibraryPreview({
   const [loading, setLoading] = useState(false);
   const [versions, setVersions] = useState<LibraryVersion[] | null>(null);
   const [selectorOpen, setSelectorOpen] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editText, setEditText] = useState("");
+  const [editBase, setEditBase] = useState(0);
+  const [saving, setSaving] = useState(false);
+  const [conflict, setConflict] = useState<{
+    base: number;
+    current: number;
+  } | null>(null);
+  const [draft, setDraft] = useState<LibraryDraft | null>(null);
+  const [notice, setNotice] = useState("");
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -96,9 +141,26 @@ function OpenLibraryPreview({
       active = false;
       controller.abort();
     };
-    // onClose/onError are stable App setters; only reload when the file changes.
+    // onClose/onError are stable App setters; reload when the file changes or
+    // an edit lands a new version.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fileId]);
+  }, [fileId, reloadKey]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let active = true;
+    getLibraryDraft(fileId, controller.signal)
+      .then((d) => {
+        if (active) setDraft(d);
+      })
+      .catch(() => {
+        // A draft is optional; a failed read must not block the preview.
+      });
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [fileId, reloadKey]);
 
   const effectiveVersion =
     selectedVersion ?? version ?? detail?.version ?? undefined;
@@ -152,6 +214,104 @@ function OpenLibraryPreview({
 
   const isHtml = detail?.mime_type === "text/html";
   const isImage = detail?.mime_type.startsWith("image/") ?? false;
+  const canEdit =
+    !!detail &&
+    isTextFile(detail.mime_type) &&
+    detail.size_bytes <= LIBRARY_EDIT_MAX_TEXT;
+
+  const startEdit = async (source: "latest" | "draft") => {
+    if (!detail) return;
+    try {
+      if (source === "draft" && draft) {
+        setEditText(draft.content);
+        setEditBase(draft.base_version);
+      } else {
+        setEditText(await libraryText(fileId, effectiveVersion));
+        setEditBase(effectiveVersion ?? detail.version);
+      }
+      setNotice("");
+      setConflict(null);
+      setEditing(true);
+    } catch (error) {
+      onError((error as Error).message);
+    }
+  };
+
+  const save = async () => {
+    setSaving(true);
+    setNotice("");
+    try {
+      const result = await saveLibraryVersion(fileId, editBase, editText);
+      setEditing(false);
+      setDraft(null);
+      setConflict(null);
+      setNotice(`Saved as version ${result.version}.`);
+      setReloadKey((n) => n + 1);
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 409) {
+        const current = error.data;
+        setConflict({
+          base: editBase,
+          current:
+            typeof current === "object" &&
+            current !== null &&
+            "current_version" in current &&
+            typeof current.current_version === "number"
+              ? current.current_version
+              : editBase + 1,
+        });
+      } else {
+        onError((error as Error).message);
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const keepDraft = async (copyPrompt: boolean) => {
+    if (!conflict) return;
+    setSaving(true);
+    try {
+      const saved = await saveLibraryDraft(fileId, conflict.base, editText);
+      setDraft(saved);
+      setEditing(false);
+      setConflict(null);
+      if (copyPrompt) {
+        try {
+          await navigator.clipboard.writeText(agentPrompt(saved));
+          setNotice("Draft saved and the agent prompt was copied.");
+        } catch {
+          setNotice("Draft saved. Use “Copy agent prompt” below to copy it.");
+        }
+      } else {
+        setNotice("Draft saved.");
+      }
+    } catch (error) {
+      onError((error as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const copyDraftPrompt = async () => {
+    if (!draft) return;
+    try {
+      await navigator.clipboard.writeText(agentPrompt(draft));
+      setNotice("Agent prompt copied.");
+    } catch {
+      onError("Could not copy the prompt.");
+    }
+  };
+
+  const discardDraft = async () => {
+    try {
+      await deleteLibraryDraft(fileId);
+      setDraft(null);
+      setNotice("Draft discarded.");
+    } catch (error) {
+      onError((error as Error).message);
+    }
+  };
 
   return (
     <Modal
@@ -205,7 +365,25 @@ function OpenLibraryPreview({
                       {detail.mime_type} · {formatBytes(detail.size_bytes)}
                     </span>
                   </div>
-                  {isHtml ? (
+                  {editing ? (
+                    <Suspense
+                      fallback={
+                        <div className="library-editor library-editor-loading">
+                          Loading editor…
+                        </div>
+                      }
+                    >
+                      <MonacoEditor
+                        key={`${fileId}:${editBase}:${draft?.id ?? "new"}`}
+                        value={editText}
+                        language={editorLanguage(
+                          detail.mime_type,
+                          detail.name,
+                        )}
+                        onChange={setEditText}
+                      />
+                    </Suspense>
+                  ) : isHtml ? (
                     <iframe
                       className="library-preview-frame"
                       title={detail.name}
@@ -254,13 +432,100 @@ function OpenLibraryPreview({
                       </dl>
                     </div>
                   )}
+                  {notice && <p className="library-edit-notice">{notice}</p>}
+                  {draft && !editing && (
+                    <div className="library-draft-banner">
+                      <span>
+                        Draft based on version {draft.base_version} saved
+                        {draft.current_version > draft.base_version
+                          ? ` — the current version is ${draft.current_version}`
+                          : ""}
+                        .
+                      </span>
+                      <div className="library-draft-actions">
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onPress={() => startEdit("draft")}
+                        >
+                          Continue draft
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onPress={copyDraftPrompt}
+                        >
+                          Copy agent prompt
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onPress={discardDraft}
+                        >
+                          Discard draft
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                  {conflict && (
+                    <div className="library-conflict">
+                      <p>
+                        <strong>Version conflict.</strong> This file is now
+                        version {conflict.current}; your edit started from
+                        version {conflict.base}.
+                      </p>
+                      <div className="library-conflict-actions">
+                        <Button
+                          variant="secondary"
+                          onPress={() => {
+                            setConflict(null);
+                            setEditing(false);
+                            setNotice("");
+                            setReloadKey((n) => n + 1);
+                          }}
+                        >
+                          Discard my changes
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          isDisabled={saving}
+                          onPress={() => keepDraft(false)}
+                        >
+                          Save as draft version
+                        </Button>
+                        <Button
+                          isDisabled={saving}
+                          onPress={() => keepDraft(true)}
+                        >
+                          Save as draft version and copy prompt
+                        </Button>
+                      </div>
+                    </div>
+                  )}
                 </>
               )}
               {!detail && !loading && fileId && (
                 <p className="muted">This file could not be loaded.</p>
               )}
             </Modal.Body>
-            {detail && (
+            {detail && editing && (
+              <Modal.Footer>
+                <Button
+                  variant="secondary"
+                  onPress={() => {
+                    setEditing(false);
+                    setConflict(null);
+                    setNotice("");
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button isDisabled={saving} onPress={save}>
+                  {saving ? "Saving…" : "Save version"}
+                </Button>
+              </Modal.Footer>
+            )}
+            {detail && !editing && (
               <Modal.Footer>
                 <a
                   className="library-open-tab"
@@ -276,6 +541,17 @@ function OpenLibraryPreview({
                   <Download size={16} />
                   Download
                 </a>
+                {canEdit && (
+                  <Button
+                    variant="secondary"
+                    onPress={() =>
+                      startEdit(draft ? "draft" : "latest")
+                    }
+                  >
+                    <Pencil size={15} />
+                    Edit
+                  </Button>
+                )}
                 <Button variant="secondary" onPress={onClose}>
                   Close
                 </Button>

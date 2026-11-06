@@ -121,6 +121,17 @@ type LibraryFile struct {
 	UpdatedAt        time.Time
 }
 
+type LibraryDraft struct {
+	ID          string `gorm:"primaryKey;type:uuid"`
+	FileID      string `gorm:"uniqueIndex;type:uuid"`
+	BaseVersion int
+	MimeType    string
+	SizeBytes   int64
+	Content     string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
 type FileVersion struct {
 	ID            string `gorm:"primaryKey;type:uuid"`
 	FileID        string `gorm:"type:uuid;index"`

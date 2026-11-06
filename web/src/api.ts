@@ -1,4 +1,18 @@
 import { decodeEvent } from "./event-codec";
+
+// ApiError keeps the HTTP status and parsed body so callers can branch on
+// contract errors such as a 409 version conflict.
+export class ApiError extends Error {
+  readonly status: number;
+  readonly data: unknown;
+  constructor(message: string, status: number, data: unknown) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.data = data;
+  }
+}
+
 export async function api<T = unknown>(
   path: string,
   method = "GET",
@@ -13,12 +27,21 @@ export async function api<T = unknown>(
   });
   if (!r.ok) {
     let error = "Request failed";
+    let data: unknown;
     try {
-      error = (await r.json()).error;
+      data = await r.json();
+      if (
+        typeof data === "object" &&
+        data !== null &&
+        "error" in data &&
+        typeof data.error === "string" &&
+        data.error
+      )
+        error = data.error;
     } catch {
       error = r.statusText;
     }
-    throw Error(error);
+    throw new ApiError(error, r.status, data);
   }
   if (r.status === 204) return undefined as T;
   const data: unknown = await r.json();
@@ -368,6 +391,66 @@ export async function getLibraryFile(
 }
 export function libraryContentUrl(id: string, version?: number): string {
   return `/api/library/${id}/content${version != null ? `?version=${version}` : ""}`;
+}
+export async function libraryText(
+  id: string,
+  version?: number,
+  signal?: AbortSignal,
+): Promise<string> {
+  const r = await fetch(libraryContentUrl(id, version), { signal });
+  if (!r.ok) throw Error(r.statusText || "Failed to load file");
+  return r.text();
+}
+export type LibraryDraft = {
+  id: string;
+  file_id: string;
+  file_name: string;
+  base_version: number;
+  current_version: number;
+  mime_type: string;
+  size_bytes: number;
+  content: string;
+  created_at: string;
+  updated_at: string;
+};
+export function saveLibraryVersion(
+  id: string,
+  baseVersion: number,
+  content: string,
+): Promise<{ version: number; size_bytes: number; sha256: string }> {
+  return api(`/library/${id}/versions`, "POST", {
+    base_version: baseVersion,
+    content,
+  });
+}
+export async function getLibraryDraft(
+  id: string,
+  signal?: AbortSignal,
+): Promise<LibraryDraft | null> {
+  try {
+    return await api<LibraryDraft>(
+      `/library/${id}/draft`,
+      "GET",
+      undefined,
+      signal,
+    );
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) return null;
+    throw error;
+  }
+}
+export function saveLibraryDraft(
+  id: string,
+  baseVersion: number,
+  content: string,
+): Promise<LibraryDraft> {
+  return api(`/library/${id}/draft`, "POST", {
+    base_version: baseVersion,
+    content,
+  });
+}
+export function deleteLibraryDraft(id: string): Promise<void> {
+  return api(`/library/${id}/draft`, "DELETE");
 }
 export const sandboxLabels: Record<string, string> = {
   not_started: "Not started",
