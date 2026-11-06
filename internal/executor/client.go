@@ -226,6 +226,8 @@ func (c controlReceiver) Tool(ctx context.Context, input generated.ToolRequest) 
 	var err error
 	if strings.HasPrefix(call.Name, "mcp__") {
 		err = json.Unmarshal(input.Call.Args, &call.MCP)
+	} else if strings.HasPrefix(call.Name, "library_") {
+		err = json.Unmarshal(input.Call.Args, &call.Library)
 	} else {
 		err = json.Unmarshal(input.Call.Args, &call.Sandbox)
 	}

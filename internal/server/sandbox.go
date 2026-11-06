@@ -186,7 +186,8 @@ func (s *Server) executeTool(ctx context.Context, scope toolScope, in model.Tool
 		return model.ToolResult{MCP: &result}, err
 	}
 	switch in.Name {
-	case "sandbox_status", "sandbox_start", "sandbox_exec", "sandbox_read_file", "sandbox_write_file":
+	case "sandbox_status", "sandbox_start", "sandbox_exec", "sandbox_read_file", "sandbox_write_file",
+		"library_list", "library_read", "library_write", "library_versions", "library_copy_to_sandbox", "library_copy_from_sandbox":
 	default:
 		return model.ToolResult{}, fmt.Errorf("unknown or forbidden tool")
 	}
@@ -200,6 +201,21 @@ func (s *Server) executeTool(ctx context.Context, scope toolScope, in model.Tool
 		}
 		view := sandboxView(sb)
 		return model.ToolResult{Sandbox: &view}, nil
+	}
+	// Library tools that need no sandbox answer without provisioning one.
+	switch in.Name {
+	case "library_list":
+		result, err := s.libraryList(ctx)
+		return model.ToolResult{Library: &result}, err
+	case "library_read":
+		result, err := s.libraryRead(ctx, in.Library)
+		return model.ToolResult{Library: &result}, err
+	case "library_write":
+		result, err := s.libraryWrite(ctx, in.Library)
+		return model.ToolResult{Library: &result}, err
+	case "library_versions":
+		result, err := s.libraryVersions(ctx, in.Library)
+		return model.ToolResult{Library: &result}, err
 	}
 	lock := s.lock(scope.SessionID)
 	lock.Lock()
@@ -231,6 +247,12 @@ func (s *Server) executeTool(ctx context.Context, scope toolScope, in model.Tool
 	case "sandbox_write_file":
 		result, err := s.Sandboxes.WriteFile(ctx, sb.E2bSandboxID, in.Sandbox.Path, in.Sandbox.Content)
 		return model.ToolResult{WriteFile: &result}, err
+	case "library_copy_to_sandbox":
+		result, err := s.libraryCopyToSandbox(ctx, sb, in.Library)
+		return model.ToolResult{Library: &result}, err
+	case "library_copy_from_sandbox":
+		result, err := s.libraryCopyFromSandbox(ctx, sb, in.Library)
+		return model.ToolResult{Library: &result}, err
 	default:
 		return model.ToolResult{}, fmt.Errorf("unknown sandbox operation")
 	}

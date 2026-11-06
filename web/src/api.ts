@@ -195,6 +195,40 @@ export type UserQuestion = {
   }[];
   answer?: { answers?: { id: string; selected: string[]; custom?: string }[] };
 };
+export type LibraryFile = {
+  id: string;
+  name: string;
+  mime_type: string;
+  size_bytes: number;
+  version: number;
+  updated_at: string;
+};
+export type LibraryVersion = {
+  version: number;
+  size_bytes: number;
+  sha256: string;
+  created_at: string;
+};
+export type LibraryDetail = {
+  id: string;
+  name: string;
+  mime_type: string;
+  size_bytes: number;
+  version: number;
+  created_at: string;
+  updated_at: string;
+  versions: LibraryVersion[];
+};
+export async function listLibrary(): Promise<LibraryFile[]> {
+  const d = await api<{ files: LibraryFile[] }>("/library");
+  return d.files ?? [];
+}
+export async function getLibraryFile(id: string): Promise<LibraryDetail> {
+  return api<LibraryDetail>(`/library/${id}`);
+}
+export function libraryContentUrl(id: string, version?: number): string {
+  return `/api/library/${id}/content${version != null ? `?version=${version}` : ""}`;
+}
 export const sandboxLabels: Record<string, string> = {
   not_started: "Not started",
   provisioning: "Starting / resuming",

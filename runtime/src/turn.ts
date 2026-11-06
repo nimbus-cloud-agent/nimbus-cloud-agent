@@ -30,7 +30,11 @@ import {
   type ContentBlock,
 } from "@deepseek-ai/dsh-llm";
 import type {} from "@deepseek-ai/dsh-session-persistence";
-import type { ImageAttachmentRef } from "@deepseek-ai/dsh-attachment";
+import type {
+  ImageAttachmentRef,
+  ImageMediaType,
+  SaveImageAttachment,
+} from "@deepseek-ai/dsh-attachment";
 import type { SkillCandidate } from "@deepseek-ai/dsh-skill";
 import type { ToolDefinition, ToolRunContext } from "@deepseek-ai/dsh-tools";
 import { UserQuestionError } from "@deepseek-ai/dsh-user-questions";
@@ -43,6 +47,151 @@ type HarnessInput = Omit<
   attachments: { ref: ImageAttachmentRef; data: string }[];
   images: { attachment: ImageAttachmentRef }[];
 };
+// Library: global, PostgreSQL-backed, versioned store for finished
+// user-facing files. The six tools route through remote() like the
+// sandbox_* tools, so the Go backend executes them and the Wasm PTC
+// runtime exposes them as SDK bindings automatically (dsh-tools builds
+// the `tools` namespace from every visible registered schema).
+const libraryStr = { type: "string" };
+const libraryNum = { type: "number" };
+export const libraryToolDefinitions: [
+  string,
+  string,
+  Record<string, unknown>,
+  string[],
+][] = [
+  [
+    "library_list",
+    "List the files currently in the Library, the global versioned store for finished user-facing files. Returns id, name, MIME type, size in bytes, current version, and update time for each file.",
+    {},
+    [],
+  ],
+  [
+    "library_read",
+    "Read a file from the Library by id or name. Text files are read by byte range (offset/length); one call returns at most 1 MiB of text, so page through larger files with offset. Images are shown to you directly, so you can describe what is in them; images over 5 MiB cannot be read this way, copy them to the sandbox with library_copy_to_sandbox instead. Other binary files cannot be read as text; copy them to the sandbox with library_copy_to_sandbox instead. Pass version to read an older version.",
+    {
+      id: libraryStr,
+      name: libraryStr,
+      version: libraryNum,
+      offset: libraryNum,
+      length: libraryNum,
+    },
+    [],
+  ],
+  [
+    "library_write",
+    "Save a finished user-facing file (HTML page, Markdown document, image, or other file) to the Library and get its shareable link (nimbus://library/<id>). Every write creates a new immutable version; older versions are kept. Maximum 100 MB per file. Use this only for finished deliverables the user should see — working files, scripts, and intermediate data stay in the session sandbox.",
+    { name: libraryStr, content: libraryStr, mime_type: libraryStr },
+    ["name", "content"],
+  ],
+  [
+    "library_versions",
+    "List all kept versions of a Library file by id or name, with size in bytes, SHA-256, and creation time for each version.",
+    { id: libraryStr, name: libraryStr },
+    [],
+  ],
+  [
+    "library_copy_to_sandbox",
+    "Copy a Library file into the session sandbox at the given path, in one call. The host streams the file in 1 MiB chunks; your code never handles chunking. Use this to process a large Library file with sandbox tools. Returns the sandbox path, byte count, and version copied.",
+    {
+      id: libraryStr,
+      name: libraryStr,
+      version: libraryNum,
+      path: libraryStr,
+    },
+    ["path"],
+  ],
+  [
+    "library_copy_from_sandbox",
+    "Copy a file from the session sandbox into the Library in one call, creating a new version under the given name (defaults to the sandbox file's name). The host streams the file in 1 MiB chunks; your code never handles chunking. Use this to publish a finished file that was built in the sandbox. Maximum 100 MB per file.",
+    { path: libraryStr, name: libraryStr, mime_type: libraryStr },
+    ["path"],
+  ],
+];
+
+export const librarySystemPrompt =
+  "The Library is a global, PostgreSQL-backed, versioned file store for finished user-facing files — HTML pages, Markdown documents, and images. It is where finished work is published, not where work happens. When you finish a deliverable the user should see and keep, save it with library_write and share its link, nimbus://library/<id>; the user clicks the link to preview the file in a modal. Working files, scripts, and intermediate data stay in the session sandbox through the sandbox_* tools: the sandbox is the workbench, the Library is the shelf for finished deliverables. Do not store sandbox working files in the Library, and do not use the Library as scratch space. Every library_write creates a new immutable version of the file and older versions are kept; list them with library_versions and read an older one by passing version to library_read. List current files with library_list. Read text by byte range with library_read (offset/length); one text read returns at most 1 MiB, so page through larger files with offset. Images read with library_read are shown to you directly, so describe what is in them. Images over 5 MiB cannot be read this way — copy them to the sandbox with library_copy_to_sandbox instead. Other binary files cannot be read as text. Move files between the Library and the sandbox in one call with library_copy_to_sandbox and library_copy_from_sandbox — the host streams the file in 1 MiB chunks for you, so your code must never handle chunking, streaming, backpressure, or retries. Caps: 100 MB per file; 1 MiB per text read; 5 MiB per image read.";
+
+/** Image payload of a Go library_read result: base64 data, replaced below. */
+export interface LibraryReadImage {
+  media_type?: string;
+  data?: string;
+  attachment?: ImageAttachmentRef;
+}
+
+/** Go library_read result. `image.data` is base64 and never stored. */
+export interface LibraryReadResult {
+  id?: string;
+  name?: string;
+  version?: number;
+  mime_type?: string;
+  size_bytes?: number;
+  content?: string;
+  truncated?: boolean;
+  image?: LibraryReadImage;
+  link?: string;
+  note?: string;
+  [key: string]: unknown;
+}
+
+/**
+ * Turn a Go library_read result into the canonical tool value. Image bytes
+ * must never reach the model or the session log as base64 text: the image is
+ * saved into the attachment store and only its durable reference is kept,
+ * so the render below can show it as an image block. When the image cannot
+ * be admitted (unsupported type, over the 5 MiB attachment cap, corrupt
+ * bytes) the base64 is still dropped and the result carries a note pointing
+ * at the Library link instead.
+ */
+export async function resolveLibraryReadImage(
+  result: LibraryReadResult,
+  saveImage: (input: SaveImageAttachment) => Promise<ImageAttachmentRef>,
+): Promise<LibraryReadResult> {
+  const image = result?.image;
+  if (!image || typeof image.data !== "string" || image.data.length === 0)
+    return result;
+  const { data: _base64, ...imageMeta } = image;
+  try {
+    const attachment = await saveImage({
+      data: Buffer.from(image.data, "base64"),
+      mediaType: (image.media_type ?? "") as ImageMediaType,
+      ...(result.name ? { name: result.name } : {}),
+    });
+    return { ...result, image: { ...imageMeta, attachment } };
+  } catch (error) {
+    return {
+      ...result,
+      image: imageMeta,
+      note: `Image preview unavailable (${errorMessage(error)}); open ${result.link ?? "the Library link"} to preview it.`,
+    };
+  }
+}
+
+/**
+ * Render a resolved library_read value. An admitted image becomes an image
+ * block the model can see (the DeepSeek adapter accepts image blocks in
+ * tool results; inside run_code the same block is deferred as a user
+ * message), beside the metadata as text. Anything else renders as JSON
+ * text, exactly like the other remote tools.
+ */
+export function renderLibraryRead(
+  _args: unknown,
+  value: unknown,
+): ContentBlock[] {
+  const result = value as LibraryReadResult | null;
+  const attachment = result?.image?.attachment;
+  if (attachment && typeof attachment === "object") {
+    return [
+      {
+        type: "image" as const,
+        attachment: attachment as ImageAttachmentRef,
+      },
+      { type: "text" as const, text: JSON.stringify(value) },
+    ];
+  }
+  return [{ type: "text" as const, text: JSON.stringify(value) }];
+}
+
 export async function runTurn(
   wireInput: TurnRequest,
   { emit, askQuestion, callTool, signal }: TurnHost,
@@ -98,11 +247,14 @@ export async function runTurn(
       "dsh-agent",
     ])
       await mount(name);
+    // Always mounted: library_read saves Library images into the attachment
+    // store so the model can see them as image blocks. Mounting only
+    // resolves paths; storage directories are created lazily on save.
+    await mount("dsh-attachment-local", {
+      dshHome: input.work_dir + "/attachments",
+      maxImageBytes: 5 * 1024 * 1024,
+    });
     if (input.attachments?.length) {
-      await mount("dsh-attachment-local", {
-        dshHome: input.work_dir + "/attachments",
-        maxImageBytes: 5 * 1024 * 1024,
-      });
       for (const image of input.attachments) {
         const ref = await ctx.attachments.saveImage({
           data: Buffer.from(image.data, "base64"),
@@ -137,6 +289,12 @@ export async function runTurn(
       else status.tools++;
       mcpStatus.set(name, status);
     }
+    ctx.systemPrompt.section({
+      name: "nimbus-library",
+      order: 80,
+      text: librarySystemPrompt,
+      interpolate: false,
+    });
     ctx.systemPrompt.section({
       name: "nimbus-mcp-status",
       order: 85,
@@ -190,6 +348,9 @@ export async function runTurn(
       properties: Record<string, unknown>,
       required: string[],
       execute: ToolDefinition["execute"],
+      render: ToolDefinition["output"]["render"] = (_args, value) => [
+        { type: "text", text: JSON.stringify(value) },
+      ],
     ) {
       ctx.tools.register({
         name,
@@ -202,9 +363,7 @@ export async function runTurn(
         },
         output: {
           schema: {},
-          render: (_args, value) => [
-            { type: "text", text: JSON.stringify(value) },
-          ],
+          render,
         },
         execute,
       });
@@ -258,6 +417,35 @@ export async function runTurn(
       register(name, desc, props, req, (args, exec) =>
         remote(name, args, exec),
       );
+    // library_read needs a custom execute/render so image bytes are admitted
+    // to the attachment store instead of reaching the model as base64 text.
+    const libraryRead = libraryToolDefinitions.find(
+      ([name]) => name === "library_read",
+    );
+    if (!libraryRead) throw Error("library_read definition missing");
+    register(
+      libraryRead[0],
+      libraryRead[1],
+      libraryRead[2],
+      libraryRead[3],
+      async (args, exec) => {
+        const result = (await remote(
+          "library_read",
+          args,
+          exec,
+        )) as LibraryReadResult;
+        return resolveLibraryReadImage(result, (input) =>
+          ctx.attachments.saveImage(input),
+        );
+      },
+      renderLibraryRead,
+    );
+    for (const [name, desc, props, req] of libraryToolDefinitions) {
+      if (name === "library_read") continue;
+      register(name, desc, props, req, (args, exec) =>
+        remote(name, args, exec),
+      );
+    }
     register(
       "skill_read",
       "Read an enabled skill from the PostgreSQL catalog. Files are not on the host or sandbox. Available: " +

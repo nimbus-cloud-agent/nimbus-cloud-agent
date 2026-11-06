@@ -79,7 +79,7 @@ func mcpResult(wire generated.MCPResult) (model.MCPResult, error) {
 }
 func encodeToolResult(result model.ToolResult) (json.RawMessage, error) {
 	count := 0
-	for _, set := range []bool{result.Sandbox != nil, result.Command != nil, result.ReadFile != nil, result.WriteFile != nil, result.MCP != nil} {
+	for _, set := range []bool{result.Sandbox != nil, result.Command != nil, result.ReadFile != nil, result.WriteFile != nil, result.Library != nil, result.MCP != nil} {
 		if set {
 			count++
 		}
@@ -96,6 +96,8 @@ func encodeToolResult(result model.ToolResult) (json.RawMessage, error) {
 		return json.Marshal(result.ReadFile)
 	case result.WriteFile != nil:
 		return json.Marshal(result.WriteFile)
+	case result.Library != nil:
+		return json.Marshal(result.Library)
 	default:
 		return json.Marshal(result.MCP)
 	}

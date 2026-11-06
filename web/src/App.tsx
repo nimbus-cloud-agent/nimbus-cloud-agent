@@ -17,6 +17,7 @@ import {
   ChevronRight,
   Code2,
   FileText,
+  Library as LibraryIcon,
   Compass,
   Search,
   Trash2,
@@ -43,6 +44,8 @@ import { Picker, Toggle, Fold } from "./components";
 import TerminalPanel from "./Terminal";
 import Settings from "./Settings";
 import Conversation from "./Conversation";
+import Library from "./Library";
+import LibraryPreview from "./LibraryPreview";
 import PanelDivider from "./PanelDivider";
 import ImageGallery from "./ImageGallery";
 export default function App() {
@@ -58,6 +61,10 @@ export default function App() {
     [filter, setFilter] = useState(""),
     [tab, setTab] = useState("chat"),
     [view, setView] = useState("chat"),
+    [panel, setPanel] = useState("chat"),
+    [preview, setPreview] = useState<{ id: string; version?: number } | null>(
+      null,
+    ),
     [online, setOnline] = useState(true),
     [sending, setSending] = useState(false),
     [rename, setRename] = useState<string | null>(null),
@@ -165,6 +172,7 @@ export default function App() {
       setSessions((xs) => [s, ...xs.filter((x) => x.id !== s.id)]);
       setId(s.id);
       setTab("chat");
+      setPanel("chat");
       return s;
     } catch (e) {
       setError(String(e));
@@ -396,6 +404,27 @@ export default function App() {
             />
           </div>
           <div className="sidebar-label">
+            <span>Library</span>
+          </div>
+          <Button
+            variant={panel === "library" ? "secondary" : "ghost"}
+            className={
+              "session-item library-nav" +
+              (panel === "library" ? " is-selected" : "")
+            }
+            aria-current={panel === "library" ? "page" : undefined}
+            onPress={() => {
+              setPanel("library");
+              setTab("chat");
+            }}
+          >
+            <LibraryIcon size={18} />
+            <span className="session-details">
+              <strong>Library</strong>
+              <span>Files the agent saved for you</span>
+            </span>
+          </Button>
+          <div className="sidebar-label">
             <span>Recent chats</span>
             <span>{sessions.length}</span>
           </div>
@@ -414,6 +443,7 @@ export default function App() {
                   aria-current={id === s.id ? "page" : undefined}
                   onPress={() => {
                     setId(s.id);
+                    setPanel("chat");
                     setTab("chat");
                   }}
                 >
@@ -471,6 +501,13 @@ export default function App() {
           </div>
         </aside>
         <section className="chat-panel">
+          {panel === "library" ? (
+            <Library
+              onOpenFile={(id) => setPreview({ id })}
+              onError={setError}
+            />
+          ) : (
+            <>
           <div className="chat-heading">
             <div>
               {rename !== null ? (
@@ -645,6 +682,7 @@ export default function App() {
                 frames={frames}
                 questions={questions}
                 retryError={setError}
+                onOpenLibraryFile={(fileId) => setPreview({ id: fileId })}
               />
             )}
             <div ref={end} />
@@ -786,6 +824,8 @@ export default function App() {
               </span>
             </div>
           </div>
+            </>
+          )}
         </section>
         <PanelDivider />
         <TerminalPanel session={current} onError={setError} />
@@ -794,6 +834,13 @@ export default function App() {
         open={settings}
         onClose={() => setSettings(false)}
         onError={setError}
+      />
+      <LibraryPreview
+        fileId={preview?.id ?? null}
+        version={preview?.version}
+        onClose={() => setPreview(null)}
+        onError={setError}
+        onOpenLibraryFile={(fileId) => setPreview({ id: fileId })}
       />
       <Modal
         isOpen={!!deleteID}

@@ -5,6 +5,7 @@ package model
 import (
 	"encoding/json"
 	"errors"
+	"time"
 )
 
 type Options struct {
@@ -200,7 +201,70 @@ type ToolCall struct {
 	Name    string
 	CallID  string
 	Sandbox SandboxArgs
+	Library LibraryArgs
 	MCP     DynamicJSON
+}
+
+// LibraryArgs carries the arguments of the library_* agent tools. Only the
+// fields each tool needs are set; ID and Name identify the file, Version
+// selects a version (0 means current), Offset/Length page a text read,
+// Path is the sandbox path for the copy tools, Content is UTF-8 text for
+// library_write, and MimeType is an explicit type override.
+type LibraryArgs struct {
+	ID       string `json:"id,omitempty"`
+	Name     string `json:"name,omitempty"`
+	Version  int64  `json:"version,omitempty"`
+	Offset   int64  `json:"offset,omitempty"`
+	Length   int64  `json:"length,omitempty"`
+	Path     string `json:"path,omitempty"`
+	Content  string `json:"content,omitempty"`
+	MimeType string `json:"mime_type,omitempty"`
+}
+
+// LibraryFileSummary is one entry of a library_list result.
+type LibraryFileSummary struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	MimeType  string    `json:"mime_type"`
+	SizeBytes int64     `json:"size_bytes"`
+	Version   int64     `json:"version"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// LibraryVersionSummary is one entry of a library_versions result.
+type LibraryVersionSummary struct {
+	Version   int64     `json:"version"`
+	SizeBytes int64     `json:"size_bytes"`
+	SHA256    string    `json:"sha256"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// LibraryImage is the image payload of a library_read result: base64 bytes
+// with their media type.
+type LibraryImage struct {
+	MediaType string `json:"media_type"`
+	Data      string `json:"data"`
+}
+
+// LibraryResult is the result of a library_* tool call. Only the fields
+// each tool returns are set; Files/ Versions hold list results, Content and
+// Truncated a paged text read, Image a full image read, Path/Bytes a copy,
+// and Link the nimbus://library/<id> link of the file.
+type LibraryResult struct {
+	ID        string                  `json:"id,omitempty"`
+	Name      string                  `json:"name,omitempty"`
+	Version   int64                   `json:"version,omitempty"`
+	MimeType  string                  `json:"mime_type,omitempty"`
+	SizeBytes int64                   `json:"size_bytes,omitempty"`
+	Content   string                  `json:"content,omitempty"`
+	Truncated bool                    `json:"truncated,omitempty"`
+	Image     *LibraryImage           `json:"image,omitempty"`
+	Files     []LibraryFileSummary    `json:"files,omitempty"`
+	Versions  []LibraryVersionSummary `json:"versions,omitempty"`
+	Path      string                  `json:"path,omitempty"`
+	Bytes     int64                   `json:"bytes,omitempty"`
+	Link      string                  `json:"link,omitempty"`
+	SHA256    string                  `json:"sha256,omitempty"`
 }
 
 // A result is selected by the application, then encoded by the RPC adapter.
@@ -210,6 +274,7 @@ type ToolResult struct {
 	Command   *CommandResult
 	ReadFile  *FileReadResult
 	WriteFile *FileWriteResult
+	Library   *LibraryResult
 	MCP       *MCPCallResult
 }
 type TurnDone struct {
