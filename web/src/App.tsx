@@ -15,12 +15,15 @@ import {
   MessageSquare,
   PanelLeft,
   TerminalSquare,
-  Layers3,
+  Maximize2,
+  Minimize2,
+  MoreHorizontal,
   Workflow,
   BrainCircuit,
   Braces,
   ImagePlus,
   ChevronRight,
+  ChevronDown,
   Code2,
   FileText,
   Library as LibraryIcon,
@@ -82,7 +85,7 @@ export default function App() {
     [error, setError] = useState(""),
     [settings, setSettings] = useState(location.search.includes("settings=")),
     [filter, setFilter] = useState(""),
-    [tab, setTab] = useState("chat"),
+    [sidebarDrawer, setSidebarDrawer] = useState(false),
     [view, setView] = useState("chat"),
     [panel, setPanel] = useState("chat"),
     [preview, setPreview] = useState<{ id: string; version?: number } | null>(
@@ -91,27 +94,59 @@ export default function App() {
     [online, setOnline] = useState(true),
     [sending, setSending] = useState(false),
     [rename, setRename] = useState<string | null>(null),
-    [deleteID, setDeleteID] = useState("");
-  const [mobile, setMobile] = useState(
-    () => matchMedia("(max-width: 1100px)").matches,
-  );
-  const historyVisible = panel === "chat" && (!mobile || tab === "chat");
-  const terminalVisible = !mobile || tab === "terminal";
+    [deleteID, setDeleteID] = useState(""),
+    [chatActions, setChatActions] = useState(false),
+    [modelOptions, setModelOptions] = useState(false),
+    [terminalOpen, setTerminalOpen] = useState(false),
+    [focused, setFocused] = useState(false);
+  const [viewport, setViewport] = useState(() => innerWidth);
+  const [sidebarOverride, setSidebarOverride] = useState<boolean | null>(null);
+  const desktop = viewport >= 1100;
+  const sidebarExpanded = sidebarOverride ?? viewport >= 1440;
+  const sidebarWidth = focused || !desktop ? 0 : sidebarExpanded ? 216 : 48;
+  const terminalVisible = terminalOpen && !focused;
+  const terminalSplit = desktop && viewport - sidebarWidth >= 1041;
+  const historyVisible =
+    panel === "chat" && !sidebarDrawer && (!terminalVisible || terminalSplit);
   const loadedHistory = useRef<{
     id: string;
     loaded: boolean;
     anchor?: string;
   }>({ id: "", loaded: false });
   useEffect(() => {
-    const media = matchMedia("(max-width: 1100px)");
-    const change = () => setMobile(media.matches);
-    media.addEventListener("change", change);
-    return () => media.removeEventListener("change", change);
+    const resize = () => setViewport(innerWidth);
+    window.addEventListener("resize", resize);
+    return () => window.removeEventListener("resize", resize);
   }, []);
   const [draftImages, setDraftImages] = useState<MessageImage[]>([]);
   const [uploadingImages, setUploadingImages] = useState(false);
   const [draggingImage, setDraggingImage] = useState(false);
   const imageInput = useRef<HTMLInputElement>(null);
+  const composerInput = useRef<HTMLTextAreaElement>(null);
+  const resizeComposer = useCallback(() => {
+    const input = composerInput.current;
+    if (!input) return;
+    input.style.height = "0px";
+    input.style.height = `${Math.min(180, input.scrollHeight)}px`;
+  }, []);
+  useLayoutEffect(resizeComposer, [
+    draft,
+    panel,
+    historyVisible,
+    resizeComposer,
+  ]);
+  useLayoutEffect(() => {
+    const input = composerInput.current;
+    if (!input) return;
+    let width = input.clientWidth;
+    const observer = new ResizeObserver(() => {
+      if (input.clientWidth === width) return;
+      width = input.clientWidth;
+      resizeComposer();
+    });
+    observer.observe(input);
+    return () => observer.disconnect();
+  }, [panel, resizeComposer]);
   const uploadPending = useRef(false);
   const selectedID = useRef(id);
   selectedID.current = id;
@@ -306,7 +341,7 @@ export default function App() {
       const s = await api<Session>("/sessions", "POST");
       setSessions((xs) => [s, ...xs.filter((x) => x.id !== s.id)]);
       setId(s.id);
-      setTab("chat");
+      setSidebarDrawer(false);
       setPanel("chat");
       return s;
     } catch (e) {
@@ -463,45 +498,300 @@ export default function App() {
         "Check the Linux, Python, and Node versions in the current sandbox, show the working directory, and briefly explain what you can help me do.",
     },
   ];
+  const sidebar = (
+    <aside className="sidebar">
+      <Button
+        className="new-session"
+        variant="primary"
+        aria-label="New chat"
+        onPress={newSession}
+      >
+        <Plus size={18} />
+        <span className="nav-label">New chat</span>
+      </Button>
+      <div className="session-search">
+        <Search size={17} />
+        <Input
+          aria-label="Search chats"
+          placeholder="Search chats…"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+        />
+      </div>
+      <Button
+        variant={panel === "library" ? "secondary" : "ghost"}
+        className={
+          "session-item library-nav" +
+          (panel === "library" ? " is-selected" : "")
+        }
+        aria-label="Library"
+        aria-current={panel === "library" ? "page" : undefined}
+        onPress={() => {
+          setPanel("library");
+          setSidebarDrawer(false);
+        }}
+      >
+        <LibraryIcon size={18} />
+        <span className="session-details">
+          <strong>Library</strong>
+        </span>
+      </Button>
+      <div className="sidebar-label">
+        <span>Recent chats</span>
+        <span>{sessions.length}</span>
+      </div>
+      <div className="session-list">
+        {sessions
+          .filter((s) => s.title.toLowerCase().includes(filter.toLowerCase()))
+          .map((s) => (
+            <Button
+              key={s.id}
+              variant={id === s.id ? "secondary" : "ghost"}
+              className={"session-item" + (id === s.id ? " is-selected" : "")}
+              aria-current={id === s.id ? "page" : undefined}
+              onPress={() => {
+                setId(s.id);
+                setPanel("chat");
+                setSidebarDrawer(false);
+              }}
+            >
+              <MessageSquare size={18} />
+              <span className="session-details">
+                <strong title={s.title}>{s.title}</strong>
+                <span>
+                  <i
+                    className={
+                      "dot " +
+                      (s.sandbox.state === "running"
+                        ? "online"
+                        : s.sandbox.state === "paused"
+                          ? "paused"
+                          : "")
+                    }
+                  />
+                  {sandboxLabels[s.sandbox.state]}
+                  <time>
+                    {new Date(s.last_active_at).toLocaleDateString("en-US", {
+                      month: "numeric",
+                      day: "numeric",
+                    })}
+                  </time>
+                </span>
+              </span>
+              {s.agent_state !== "idle" && <span className="pulse" />}
+            </Button>
+          ))}
+        {sessions.length === 0 && (
+          <p className="empty-list">
+            Every new task
+            <br />
+            starts with a new conversation.
+          </p>
+        )}
+      </div>
+      <div className="sidebar-footer">
+        <Button
+          variant="ghost"
+          aria-label="Settings"
+          onPress={() => {
+            setSidebarDrawer(false);
+            setSettings(true);
+          }}
+        >
+          <SettingsIcon size={18} />
+          <span className="nav-label">Settings</span>
+        </Button>
+      </div>
+    </aside>
+  );
+  const modelControls = current && (
+    <div className="model-bar">
+      <span
+        className="model-label"
+        title="deepseek-flash"
+        aria-label="Model: DeepSeek Flash"
+      >
+        <Cloud size={16} />
+        DeepSeek Flash
+      </span>
+      <span className="toolbar-divider" />
+      <Toggle
+        label="Plan"
+        value={current.options.plan}
+        onChange={(v) => options({ plan: v })}
+      />
+      <div
+        className="thinking-control"
+        title="Reasoning effort affects depth and response time. Changes apply to the next turn."
+      >
+        <BrainCircuit size={16} />
+        <span>Reasoning</span>
+        <Picker
+          label="Reasoning effort"
+          value={current.options.thinking}
+          values={["off", "low", "high", "max"].map((x) => [x, x])}
+          onChange={(v) => options({ thinking: v })}
+        />
+      </div>
+    </div>
+  );
   return (
     <TurnTraceProvider key={id}>
-      <div className="app">
+      <div
+        className={`app ${sidebarExpanded ? "sidebar-expanded" : "sidebar-collapsed"}${focused ? " is-focused" : ""}`}
+      >
         <header className="topbar">
           <div className="brand">
             <span className="brand-mark">
-              <Cloud size={24} />
+              <Cloud size={19} />
             </span>
             <strong>Nimbus</strong>
-            <span className="brand-divider" />
-            <span>Cloud Agent workspace</span>
+          </div>
+          <Button
+            isIconOnly
+            size="sm"
+            variant="ghost"
+            aria-label={
+              !desktop
+                ? "Show sessions"
+                : sidebarExpanded && !focused
+                  ? "Collapse sidebar"
+                  : "Expand sidebar"
+            }
+            aria-expanded={
+              desktop ? sidebarExpanded && !focused : sidebarDrawer
+            }
+            onPress={() => {
+              if (!desktop) setSidebarDrawer(true);
+              else {
+                setFocused(false);
+                setSidebarOverride(focused || !sidebarExpanded);
+              }
+            }}
+          >
+            <PanelLeft size={18} />
+          </Button>
+          <div className="workspace-heading">
+            {rename !== null && panel === "chat" ? (
+              <div className="row">
+                <Input
+                  aria-label="Chat title"
+                  value={rename}
+                  onChange={(e) => setRename(e.target.value)}
+                />
+                <Button
+                  isIconOnly
+                  size="sm"
+                  aria-label="Save title"
+                  onPress={() =>
+                    api(`/sessions/${id}`, "PATCH", { title: rename })
+                      .then(() => setRename(null))
+                      .catch((e) => setError(e.message))
+                  }
+                >
+                  <Check size={15} />
+                </Button>
+                <Button
+                  isIconOnly
+                  size="sm"
+                  variant="ghost"
+                  aria-label="Cancel rename"
+                  onPress={() => setRename(null)}
+                >
+                  <X size={15} />
+                </Button>
+              </div>
+            ) : (
+              <h1
+                className="conversation-title"
+                title={panel === "library" ? "Library" : current?.title}
+              >
+                {panel === "library"
+                  ? "Library"
+                  : (current?.title ?? "New conversation")}
+              </h1>
+            )}
           </div>
           <div className="top-actions">
-            <span className="connection">
-              <span className={"dot " + (online ? "online" : "")} />
-              {online ? "Connected to local service" : "Reconnecting…"}
+            <span
+              className="workspace-status"
+              title={
+                online
+                  ? `Sandbox: ${sandboxLabels[current?.sandbox.state ?? "not_started"]}`
+                  : "Reconnecting to service"
+              }
+            >
+              <span
+                className={
+                  "dot " +
+                  (online
+                    ? current?.sandbox.state === "running"
+                      ? "online"
+                      : current?.sandbox.state === "paused"
+                        ? "paused"
+                        : ""
+                    : "")
+                }
+              />
+              <span className="toolbar-label">
+                {online
+                  ? sandboxLabels[current?.sandbox.state ?? "not_started"]
+                  : "Reconnecting…"}
+              </span>
             </span>
-            <Button size="sm" variant="ghost" onPress={() => setSettings(true)}>
-              <SettingsIcon size={18} />
-              Settings
+            {panel === "chat" && current && (
+              <Button
+                size="sm"
+                variant="ghost"
+                className={
+                  "trajectory-toggle" +
+                  (view === "trajectory" ? " is-active" : "")
+                }
+                aria-label={view === "chat" ? "Activity" : "Back to chat"}
+                onPress={() => setView(view === "chat" ? "trajectory" : "chat")}
+              >
+                <Workflow size={17} />
+                <span className="toolbar-label">
+                  {view === "chat" ? "Activity" : "Chat"}
+                </span>
+              </Button>
+            )}
+            <Button
+              size="sm"
+              variant={terminalVisible ? "secondary" : "ghost"}
+              aria-label="Terminal"
+              aria-expanded={terminalVisible}
+              onPress={() => {
+                if (focused) {
+                  setFocused(false);
+                  setTerminalOpen(true);
+                } else setTerminalOpen(!terminalOpen);
+              }}
+            >
+              <TerminalSquare size={17} />
+              <span className="toolbar-label">Terminal</span>
+            </Button>
+            <Button
+              isIconOnly
+              size="sm"
+              variant="ghost"
+              className="focus-toggle"
+              aria-label={focused ? "Exit focus mode" : "Focus mode"}
+              onPress={() => setFocused(!focused)}
+            >
+              {focused ? <Minimize2 size={17} /> : <Maximize2 size={17} />}
+            </Button>
+            <Button
+              isIconOnly
+              size="sm"
+              variant="ghost"
+              aria-label="Chat actions"
+              onPress={() => setChatActions(true)}
+            >
+              <MoreHorizontal size={19} />
             </Button>
           </div>
         </header>
-        <nav className="mobile-tabs">
-          {[
-            ["sessions", "Sessions", <PanelLeft size={16} />],
-            ["chat", "Chat", <MessageSquare size={16} />],
-            ["terminal", "Terminal", <TerminalSquare size={16} />],
-          ].map(([k, t, icon]) => (
-            <Button
-              key={String(k)}
-              variant={tab === k ? "secondary" : "ghost"}
-              onPress={() => setTab(String(k))}
-            >
-              {icon}
-              {t}
-            </Button>
-          ))}
-        </nav>
         {error && (
           <div className="error-banner" role="alert">
             <span>{error}</span>
@@ -516,126 +806,13 @@ export default function App() {
             </Button>
           </div>
         )}
-        <main className={"workspace show-" + tab}>
-          <aside className="sidebar">
-            <div className="sidebar-intro">
-              <span>My workspace</span>
-              <Layers3 size={16} />
-            </div>
-            <Button
-              className="new-session"
-              variant="primary"
-              onPress={newSession}
-            >
-              <Plus size={18} />
-              New chat
-            </Button>
-            <div className="session-search">
-              <Search size={17} />
-              <Input
-                aria-label="Search chats"
-                placeholder="Search chats…"
-                value={filter}
-                onChange={(e) => setFilter(e.target.value)}
-              />
-            </div>
-            <div className="sidebar-label">
-              <span>Library</span>
-            </div>
-            <Button
-              variant={panel === "library" ? "secondary" : "ghost"}
-              className={
-                "session-item library-nav" +
-                (panel === "library" ? " is-selected" : "")
-              }
-              aria-current={panel === "library" ? "page" : undefined}
-              onPress={() => {
-                setPanel("library");
-                setTab("chat");
-              }}
-            >
-              <LibraryIcon size={18} />
-              <span className="session-details">
-                <strong>Library</strong>
-                <span>Files the agent saved for you</span>
-              </span>
-            </Button>
-            <div className="sidebar-label">
-              <span>Recent chats</span>
-              <span>{sessions.length}</span>
-            </div>
-            <div className="session-list">
-              {sessions
-                .filter((s) =>
-                  s.title.toLowerCase().includes(filter.toLowerCase()),
-                )
-                .map((s) => (
-                  <Button
-                    key={s.id}
-                    variant={id === s.id ? "secondary" : "ghost"}
-                    className={
-                      "session-item" + (id === s.id ? " is-selected" : "")
-                    }
-                    aria-current={id === s.id ? "page" : undefined}
-                    onPress={() => {
-                      setId(s.id);
-                      setPanel("chat");
-                      setTab("chat");
-                    }}
-                  >
-                    <MessageSquare size={18} />
-                    <span className="session-details">
-                      <strong title={s.title}>{s.title}</strong>
-                      <span>
-                        <i
-                          className={
-                            "dot " +
-                            (s.sandbox.state === "running"
-                              ? "online"
-                              : s.sandbox.state === "paused"
-                                ? "paused"
-                                : "")
-                          }
-                        />
-                        {sandboxLabels[s.sandbox.state]}
-                        <time>
-                          {new Date(s.last_active_at).toLocaleDateString(
-                            "en-US",
-                            { month: "numeric", day: "numeric" },
-                          )}
-                        </time>
-                      </span>
-                      {s.sandbox.e2b_sandbox_id && (
-                        <span
-                          className="session-sandbox"
-                          title={s.sandbox.e2b_sandbox_id}
-                        >
-                          <span>{s.sandbox.info?.region ?? "us-west-1"}</span>
-                          <code>{s.sandbox.e2b_sandbox_id.slice(0, 8)}…</code>
-                        </span>
-                      )}
-                    </span>
-                    {s.agent_state !== "idle" && <span className="pulse" />}
-                  </Button>
-                ))}
-              {sessions.length === 0 && (
-                <p className="empty-list">
-                  Every new task
-                  <br />
-                  starts with a new conversation.
-                </p>
-              )}
-            </div>
-            <div className="sidebar-footer">
-              <span className="avatar">
-                <Cloud size={19} />
-              </span>
-              <div>
-                <strong>Local workspace</strong>
-                <small>DeepSeek + E2B Cloud</small>
-              </div>
-            </div>
-          </aside>
+        <main
+          className={
+            "workspace" +
+            (terminalVisible && terminalSplit ? " terminal-split" : "")
+          }
+        >
+          {desktop && !focused && sidebar}
           <section className="chat-panel">
             {panel === "library" ? (
               <Library
@@ -644,123 +821,6 @@ export default function App() {
               />
             ) : (
               <>
-                <div className="chat-heading">
-                  <div>
-                    {rename !== null ? (
-                      <div className="row">
-                        <Input
-                          aria-label="Chat title"
-                          value={rename}
-                          onChange={(e) => setRename(e.target.value)}
-                        />
-                        <Button
-                          isIconOnly
-                          size="sm"
-                          aria-label="Save title"
-                          onPress={() =>
-                            api(`/sessions/${id}`, "PATCH", { title: rename })
-                              .then(() => {
-                                setRename(null);
-                              })
-                              .catch((e) => setError(e.message))
-                          }
-                        >
-                          <Check size={15} />
-                        </Button>
-                      </div>
-                    ) : (
-                      <h1>
-                        <span
-                          className="conversation-title"
-                          title={current?.title}
-                        >
-                          {current?.title ?? "Start something new"}
-                        </span>
-                        {current && (
-                          <Button
-                            isIconOnly
-                            size="sm"
-                            variant="ghost"
-                            aria-label="Rename chat"
-                            onPress={() => setRename(current.title)}
-                          >
-                            <Pencil size={16} />
-                          </Button>
-                        )}
-                      </h1>
-                    )}
-                    <p>
-                      <span className="dot online" />
-                      Chats are saved automatically. The sandbox runs on demand.
-                    </p>
-                  </div>
-                  <div className="row">
-                    <Button
-                      className={
-                        "trajectory-toggle" +
-                        (view === "trajectory" ? " is-active" : "")
-                      }
-                      size="sm"
-                      variant="ghost"
-                      onPress={() =>
-                        setView(view === "chat" ? "trajectory" : "chat")
-                      }
-                    >
-                      <Workflow size={17} />
-                      {view === "chat" ? "Activity" : "Back to chat"}
-                    </Button>
-                    {current && (
-                      <Button
-                        isIconOnly
-                        size="sm"
-                        variant="ghost"
-                        aria-label="Delete chat"
-                        onPress={() => setDeleteID(id)}
-                      >
-                        <Trash2 size={17} />
-                      </Button>
-                    )}
-                  </div>
-                </div>
-                {current && (
-                  <div className="model-bar">
-                    <span
-                      className="model-label"
-                      title="deepseek-flash"
-                      aria-label="Model: DeepSeek Flash"
-                    >
-                      <Cloud size={16} />
-                      DeepSeek Flash
-                    </span>
-                    <span className="toolbar-divider" />
-                    <Toggle
-                      label="Plan"
-                      value={current.options.plan}
-                      onChange={(v) => options({ plan: v })}
-                    />
-                    <div
-                      className="thinking-control"
-                      title="Reasoning effort affects depth and response time. Changes apply to the next turn."
-                    >
-                      <BrainCircuit size={16} />
-                      <span>Reasoning</span>
-                      <Picker
-                        label="Reasoning effort"
-                        value={current.options.thinking}
-                        values={["off", "low", "high", "max"].map((x) => [
-                          x,
-                          x,
-                        ])}
-                        onChange={(v) => options({ thinking: v })}
-                      />
-                    </div>
-                    <span className="toolbar-divider" />
-                    <span className="model-label" title="Wasm PTC">
-                      <Braces size={16} />
-                      Wasm PTC
-                    </span>
-                  </div>
-                )}
                 <div
                   ref={scroll}
                   className="conversation"
@@ -913,8 +973,13 @@ export default function App() {
                       }
                     />
                     <TextArea
+                      ref={composerInput}
                       aria-label="Send a message"
-                      placeholder="Send a message, paste an image, or describe what you want to do…"
+                      placeholder={
+                        viewport < 768
+                          ? "Message Nimbus…"
+                          : "Send a message, paste an image, or describe what you want to do…"
+                      }
                       value={draft}
                       onChange={(e) => setDraft(e.target.value)}
                       onPaste={(e) => {
@@ -937,7 +1002,7 @@ export default function App() {
                           send();
                         }
                       }}
-                      rows={2}
+                      rows={1}
                     />
                     <div className="composer-bottom">
                       <div className="composer-tools">
@@ -966,23 +1031,34 @@ export default function App() {
                             <ImagePlus size={18} />
                           </Button>
                         </span>
-                        <span>
-                          <span
-                            className={
-                              "dot " +
-                              (current?.sandbox.state === "running"
-                                ? "online"
-                                : "")
-                            }
-                          />
-                          {draggingImage
-                            ? "Release to attach images"
-                            : uploadingImages
-                              ? "Uploading images…"
-                              : current?.sandbox.state === "running"
-                                ? "Connected to your sandbox"
-                                : "Sandbox starts on demand"}
-                        </span>
+                        {(draggingImage || uploadingImages) && (
+                          <span className="composer-hint" role="status">
+                            {draggingImage
+                              ? "Release to attach images"
+                              : "Uploading images…"}
+                          </span>
+                        )}
+                        {viewport >= 768
+                          ? modelControls
+                          : current && (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="compact-model-options"
+                                aria-label="Model options"
+                                onPress={() => setModelOptions(true)}
+                              >
+                                <Cloud size={15} />
+                                <span>
+                                  Flash
+                                  {current.options.thinking !== "off"
+                                    ? ` · ${current.options.thinking}`
+                                    : ""}
+                                  {current.options.plan ? " · Plan" : ""}
+                                </span>
+                                <ChevronDown size={13} />
+                              </Button>
+                            )}
                       </div>
                       <div className="row">
                         {current && current.agent_state !== "idle" && (
@@ -1016,22 +1092,129 @@ export default function App() {
                       </div>
                     </div>
                   </div>
-                  <div className="composer-note">
-                    <span>
-                      <kbd>Enter</kbd> to send <kbd>Shift + Enter</kbd> for a
-                      new line
-                    </span>
-                    <span>{"Tools run through Wasm PTC"}</span>
-                  </div>
                 </div>
               </>
             )}
+            <Modal isOpen={modelOptions} onOpenChange={setModelOptions}>
+              <Modal.Backdrop>
+                <Modal.Container>
+                  <Modal.Dialog className="model-options-dialog">
+                    <Modal.CloseTrigger />
+                    <Modal.Header>
+                      <Modal.Heading>Model options</Modal.Heading>
+                    </Modal.Header>
+                    <Modal.Body>{modelControls}</Modal.Body>
+                  </Modal.Dialog>
+                </Modal.Container>
+              </Modal.Backdrop>
+            </Modal>
           </section>
-          <PanelDivider />
-          {terminalVisible && (
-            <TerminalPanel session={current} onError={setError} />
+          {terminalVisible && terminalSplit && (
+            <>
+              <PanelDivider />
+              <div className="terminal-dock">
+                <TerminalPanel
+                  session={current}
+                  onError={setError}
+                  onClose={() => setTerminalOpen(false)}
+                />
+              </div>
+            </>
           )}
         </main>
+        {sidebarDrawer && (
+          <Modal isOpen onOpenChange={setSidebarDrawer}>
+            <Modal.Backdrop className="workspace-overlay-backdrop">
+              <Modal.Container
+                size="full"
+                className="workspace-overlay-container"
+              >
+                <Modal.Dialog className="sidebar-drawer-dialog">
+                  <Modal.CloseTrigger />
+                  <Modal.Header>
+                    <Modal.Heading>Sessions</Modal.Heading>
+                  </Modal.Header>
+                  {sidebar}
+                </Modal.Dialog>
+              </Modal.Container>
+            </Modal.Backdrop>
+          </Modal>
+        )}
+        {terminalVisible && !terminalSplit && (
+          <Modal
+            isOpen
+            onOpenChange={(open) => {
+              if (!open) setTerminalOpen(false);
+            }}
+          >
+            <Modal.Backdrop className="workspace-overlay-backdrop">
+              <Modal.Container
+                size="full"
+                className="workspace-overlay-container"
+              >
+                <Modal.Dialog className="terminal-overlay-dialog">
+                  <Modal.CloseTrigger aria-label="Close terminal" />
+                  <Modal.Header>
+                    <Modal.Heading>Terminal</Modal.Heading>
+                  </Modal.Header>
+                  <TerminalPanel session={current} onError={setError} />
+                </Modal.Dialog>
+              </Modal.Container>
+            </Modal.Backdrop>
+          </Modal>
+        )}
+        <Modal isOpen={chatActions} onOpenChange={setChatActions}>
+          <Modal.Backdrop>
+            <Modal.Container>
+              <Modal.Dialog className="chat-actions-dialog">
+                <Modal.CloseTrigger />
+                <Modal.Header>
+                  <Modal.Heading>Chat actions</Modal.Heading>
+                </Modal.Header>
+                <Modal.Body>
+                  {current && panel === "chat" && (
+                    <>
+                      <Button
+                        variant="ghost"
+                        onPress={() => {
+                          setRename(current.title);
+                          setChatActions(false);
+                        }}
+                      >
+                        <Pencil size={17} />
+                        Rename chat
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        onPress={() => {
+                          setChatActions(false);
+                          setDeleteID(id);
+                        }}
+                      >
+                        <Trash2 size={17} />
+                        Delete chat
+                      </Button>
+                    </>
+                  )}
+                  <Button
+                    variant="ghost"
+                    onPress={() => {
+                      setChatActions(false);
+                      setSettings(true);
+                    }}
+                  >
+                    <SettingsIcon size={17} />
+                    Settings
+                  </Button>
+                  <p className="engine-note">
+                    <Braces size={14} />
+                    Tools run through Wasm PTC
+                  </p>
+                </Modal.Body>
+              </Modal.Dialog>
+            </Modal.Container>
+          </Modal.Backdrop>
+        </Modal>
         <Settings
           open={settings}
           onClose={() => setSettings(false)}

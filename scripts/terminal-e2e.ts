@@ -85,6 +85,7 @@ try {
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(base + "/#" + session.id);
+  await page.getByRole("button", { name: "Terminal", exact: true }).click();
   const input = page.locator(".xterm-helper-textarea");
   await input.waitFor({ state: "attached" });
   await page.locator(".xterm").click();

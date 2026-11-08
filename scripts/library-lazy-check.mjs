@@ -179,7 +179,7 @@ await page.route("**/api/**", async (route) => {
     const current = files.find((candidate) => candidate.id === id);
     assert.ok(
       current,
-      `unexpected metadata/content request for hidden file ${id}`,
+      `unexpected metadata/content request for hidden file ${id}: ${requests.map((url) => url.pathname + url.search).join(", ")}`,
     );
     if (match[2]) {
       const version = url.searchParams.get("version");
@@ -377,17 +377,28 @@ try {
     false,
   );
 
-  // List fetches belong to the mounted Library panel and are aborted on navigation.
+  // Drawer selection closes navigation; Library requests still abort on leaving.
+  await page.setViewportSize({ width: 390, height: 844 });
+  const showSessions = page
+    .locator(".topbar")
+    .getByRole("button", { name: "Show sessions", exact: true });
+  const drawer = page.locator(".sidebar-drawer-dialog");
   const listGate = hold("list");
-  await page.locator(".library-nav").click();
+  await showSessions.click();
+  await drawer.locator(".library-nav").click();
+  await drawer.waitFor({ state: "hidden" });
   await waitUntil(() => listGate.entered);
-  await page
+  await showSessions.click();
+  await drawer
     .locator(".session-list .session-item")
     .filter({ hasText: session.title })
     .click();
+  await drawer.waitFor({ state: "hidden" });
   assert.equal(await wasAborted("/api/library"), true);
   listGate.release();
-  await page.locator(".library-nav").click();
+  await showSessions.click();
+  await drawer.locator(".library-nav").click();
+  await drawer.waitFor({ state: "hidden" });
   await page.locator(".library-item").filter({ hasText: "other.md" }).waitFor();
   const otherContent = hold(`content:${ids.other}:1`);
   await page.locator(".library-item").filter({ hasText: "other.md" }).click();

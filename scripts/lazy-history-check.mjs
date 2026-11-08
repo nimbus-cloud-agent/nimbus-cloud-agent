@@ -96,7 +96,7 @@ let releaseStale;
 let releaseTrace;
 let failDetail = true;
 let completedLive = false;
-page.on("pageerror", (e) => errors.push(e.message));
+page.on("pageerror", (e) => errors.push(e.stack ?? e.message));
 await page.addInitScript(
   ({ sessions }) => {
     window.__streams = [];
@@ -304,7 +304,7 @@ const emit = async (suffix, type, data, id = "") =>
   );
 const waitUntil = async (predicate) => {
   for (let i = 0; i < 100 && !predicate(); i++) await page.waitForTimeout(25);
-  assert.ok(predicate());
+  assert.ok(predicate(), JSON.stringify({ requests, errors }));
 };
 try {
   await page.goto(`${base}/#${sid}`);
@@ -484,28 +484,212 @@ try {
     ),
     true,
   );
-  // CSS-hidden mobile panels must not keep their queries or terminal socket.
-  await page.setViewportSize({ width: 390, height: 844 });
+  // A running sandbox alone must never mount a terminal or open its socket.
   const runningSession = {
     ...session(alternate),
     sandbox: { state: "running" },
   };
   await emit("/sessions/stream", "sessions", [session(sid), runningSession]);
-  await page.evaluate(
-    () =>
-      new Promise((resolve) =>
-        requestAnimationFrame(() => requestAnimationFrame(resolve)),
-      ),
-  );
+  await page.waitForTimeout(100);
   assert.equal(await page.evaluate(() => window.__sockets.length), 0);
+  const topbar = page.locator(".topbar");
+  const composer = page.getByRole("textbox", {
+    name: "Send a message",
+    exact: true,
+  });
+  const chatWidth = () =>
+    page
+      .locator(".chat-panel")
+      .evaluate((el) => el.getBoundingClientRect().width);
+  const noOverflow = async () => {
+    assert.equal(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth + 1,
+      ),
+      true,
+      "the workspace must not create horizontal page overflow",
+    );
+  };
+  const sidebarWidth = () =>
+    page
+      .locator(".workspace > .sidebar")
+      .evaluate((el) => el.getBoundingClientRect().width);
+  await page.setViewportSize({ width: 1200, height: 900 });
+  await topbar
+    .getByRole("button", { name: "Expand sidebar", exact: true })
+    .waitFor();
+  assert.ok(
+    (await sidebarWidth()) <= 50,
+    "mid-size desktop starts with a compact rail",
+  );
+  await page.setViewportSize({ width: 1568, height: 961 });
+  await topbar
+    .getByRole("button", { name: "Collapse sidebar", exact: true })
+    .waitFor();
+  assert.ok(
+    (await sidebarWidth()) >= 210,
+    "wide desktop starts with expanded sessions",
+  );
+  const readingWidth = await chatWidth();
+  assert.ok(
+    readingWidth >= 1300,
+    "1568px workspace gives the chat the space formerly reserved for the terminal",
+  );
+  await page.screenshot({
+    path: ".local/workspace-desktop-default.png",
+    animations: "disabled",
+  });
+  await topbar
+    .getByRole("button", { name: "Collapse sidebar", exact: true })
+    .click();
+  assert.ok(
+    (await chatWidth()) > readingWidth + 150,
+    "collapsing sessions gives that space to chat",
+  );
+  await topbar
+    .getByRole("button", { name: "Expand sidebar", exact: true })
+    .click();
+  await composer.fill("A draft that survives terminal and responsive changes.");
+  const shortHeight = await composer.evaluate(
+    (el) => el.getBoundingClientRect().height,
+  );
+  const draft = Array.from({ length: 16 }, (_, i) => `Draft line ${i}`).join(
+    "\n",
+  );
+  await composer.fill(draft);
+  assert.ok(
+    (await composer.evaluate((el) => el.getBoundingClientRect().height)) >
+      shortHeight,
+  );
+  assert.ok(
+    (await composer.evaluate((el) => el.getBoundingClientRect().height)) <= 181,
+  );
+  await topbar.getByRole("button", { name: "Terminal", exact: true }).click();
+  await page.locator(".terminal-dock").waitFor();
+  await page.waitForFunction(() =>
+    window.__sockets.some((socket) => !socket.closed),
+  );
+  assert.ok((await chatWidth()) >= 720, "split keeps at least 720px for chat");
+  assert.ok(
+    (await chatWidth()) < readingWidth - 300,
+    "terminal width is allocated only on demand",
+  );
+  await page.screenshot({
+    path: ".local/workspace-desktop-split.png",
+    animations: "disabled",
+  });
+  const divider = page.getByRole("separator", {
+    name: "Terminal width",
+    exact: true,
+  });
+  await divider.focus();
+  await divider.press("End");
+  assert.ok(
+    (await chatWidth()) >= 720,
+    "keyboard maximum terminal width preserves chat minimum",
+  );
+  const maximumTerminal = Number(await divider.getAttribute("aria-valuenow"));
+  await divider.press("ArrowRight");
+  assert.ok(
+    Number(await divider.getAttribute("aria-valuenow")) < maximumTerminal,
+    "arrow key resizes the terminal",
+  );
+  assert.ok((await chatWidth()) >= 720);
+  const handle = await divider.boundingBox();
+  assert.ok(handle);
+  await page.mouse.move(
+    handle.x + handle.width / 2,
+    handle.y + handle.height / 2,
+  );
+  await page.mouse.down();
+  await page.mouse.move(1, handle.y + handle.height / 2, { steps: 5 });
+  await page.mouse.up();
+  assert.ok(
+    (await chatWidth()) >= 720,
+    "dragging cannot shrink chat below its reading minimum",
+  );
+  await divider.dblclick();
+  await topbar.getByRole("button", { name: "Focus mode", exact: true }).click();
+  await page.locator(".terminal-dock").waitFor({ state: "hidden" });
+  assert.equal(await page.locator(".workspace > .sidebar").isVisible(), false);
+  assert.ok(
+    (await chatWidth()) > readingWidth,
+    "focus mode gives chat the sidebar and terminal space",
+  );
+  await page.waitForFunction(() =>
+    window.__sockets.every((socket) => socket.closed),
+  );
+  await topbar
+    .getByRole("button", { name: "Exit focus mode", exact: true })
+    .click();
+  await page.locator(".terminal-dock").waitFor();
+  assert.ok(
+    (await sidebarWidth()) >= 210,
+    "leaving focus restores the sidebar preference",
+  );
+  await page
+    .locator(".terminal-dock")
+    .getByRole("button", { name: "Close terminal", exact: true })
+    .click();
+  await page.waitForFunction(() =>
+    window.__sockets.every((socket) => socket.closed),
+  );
+  assert.equal(await composer.inputValue(), draft);
+  await topbar.getByRole("button", { name: "Terminal", exact: true }).click();
+  await page.locator(".terminal-dock").waitFor();
+  assert.ok(
+    (await chatWidth()) >= 720,
+    "leaving focus restores the open split terminal",
+  );
+  await noOverflow();
+  await page.setViewportSize({ width: 1200, height: 900 });
+  await page.locator(".terminal-overlay-dialog").waitFor();
+  assert.equal(await page.locator(".terminal-dock").count(), 0);
+  await page
+    .locator(".terminal-overlay-dialog")
+    .getByRole("button", { name: "Close terminal", exact: true })
+    .click();
+  await page.waitForFunction(() =>
+    window.__sockets.every((socket) => socket.closed),
+  );
+  assert.equal(await composer.inputValue(), draft);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await topbar
+    .getByRole("button", { name: "Show sessions", exact: true })
+    .waitFor();
+  await noOverflow();
   const alternateLoads = requests.filter((path) =>
     path.startsWith(`/api/sessions/${alternate}/events`),
   ).length;
-  await page
-    .locator(".mobile-tabs")
-    .getByRole("button", { name: "Terminal", exact: true })
-    .click();
-  await page.waitForFunction(() => window.__sockets.length === 1);
+  await topbar.getByRole("button", { name: "Terminal", exact: true }).click();
+  await page.locator(".terminal-overlay-dialog").waitFor();
+  await page.waitForFunction(() =>
+    window.__sockets.some((socket) => !socket.closed),
+  );
+  const mobileTerminal = await page
+    .locator(".terminal-overlay-dialog")
+    .boundingBox();
+  assert.ok(
+    mobileTerminal &&
+      mobileTerminal.x < 1 &&
+      mobileTerminal.y < 1 &&
+      mobileTerminal.width >= 389 &&
+      mobileTerminal.height >= 843,
+    "mobile terminal occupies the usable viewport",
+  );
+  assert.equal(
+    await page
+      .locator(".terminal-overlay-dialog")
+      .evaluate(
+        (el) => getComputedStyle(el.closest(".modal__backdrop")).opacity,
+      ),
+    "1",
+    "reopening a responsive terminal must not leave an invisible modal",
+  );
+  await page.screenshot({
+    path: ".local/workspace-mobile-terminal.png",
+    animations: "disabled",
+  });
   assert.equal(
     await page.evaluate(
       (id) =>
@@ -519,8 +703,8 @@ try {
     true,
   );
   await page
-    .locator(".mobile-tabs")
-    .getByRole("button", { name: "Chat", exact: true })
+    .locator(".terminal-overlay-dialog")
+    .getByRole("button", { name: "Close terminal", exact: true })
     .click();
   await page.getByText("Alternate session only", { exact: true }).waitFor();
   assert.equal(
@@ -536,11 +720,72 @@ try {
     alternateLoads,
     "returning to chat reuses its page cache",
   );
+  assert.equal(
+    await composer.inputValue(),
+    draft,
+    "closing and resizing preserve the unsent draft",
+  );
+  await noOverflow();
+  await composer.fill("");
+  await page.screenshot({
+    path: ".local/workspace-mobile-chat.png",
+    animations: "disabled",
+  });
   await page
-    .locator(".mobile-tabs")
-    .getByRole("button", { name: "Sessions", exact: true })
+    .getByRole("button", { name: "Model options", exact: true })
     .click();
-  await page.locator(".library-nav").click();
+  const modelOptions = page.locator(".model-options-dialog");
+  await modelOptions
+    .getByRole("switch", { name: "Plan", exact: true })
+    .waitFor();
+  await modelOptions
+    .getByRole("button", { name: "Close", exact: true })
+    .click();
+  await page.setViewportSize({ width: 390, height: 520 });
+  const compactInput = await composer.boundingBox();
+  assert.ok(
+    compactInput &&
+      compactInput.y >= 48 &&
+      compactInput.y + compactInput.height <= 520,
+    "composer stays inside a shortened viewport",
+  );
+  await noOverflow();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await composer.fill(draft);
+  await topbar
+    .getByRole("button", { name: "Show sessions", exact: true })
+    .click();
+  await page.waitForFunction(
+    (id) =>
+      window.__streams
+        .filter((s) => new URL(s.url).pathname === `/api/sessions/${id}/stream`)
+        .every((s) => s.closed),
+    alternate,
+  );
+  await page
+    .locator(".sidebar-drawer-dialog")
+    .getByRole("button", { name: "Close", exact: true })
+    .click();
+  await page.waitForFunction(
+    (id) =>
+      window.__streams.some(
+        (s) =>
+          new URL(s.url).pathname === `/api/sessions/${id}/stream` && !s.closed,
+      ),
+    alternate,
+  );
+  assert.equal(
+    requests.filter((path) =>
+      path.startsWith(`/api/sessions/${alternate}/events`),
+    ).length,
+    alternateLoads,
+  );
+  assert.equal(await composer.inputValue(), draft);
+  await topbar
+    .getByRole("button", { name: "Show sessions", exact: true })
+    .click();
+  await page.locator(".sidebar-drawer-dialog .library-nav").click();
+  await page.locator(".sidebar-drawer-dialog").waitFor({ state: "hidden" });
   await waitUntil(() => requests.some((path) => path === "/api/library"));
   assert.equal(
     await page.evaluate(
@@ -554,14 +799,14 @@ try {
     ),
     true,
   );
-  await page
-    .locator(".mobile-tabs")
-    .getByRole("button", { name: "Sessions", exact: true })
+  await topbar
+    .getByRole("button", { name: "Show sessions", exact: true })
     .click();
   await page
-    .locator(".session-list .session-item")
+    .locator(".sidebar-drawer-dialog .session-list .session-item")
     .filter({ hasText: alternate })
     .click();
+  await page.locator(".sidebar-drawer-dialog").waitFor({ state: "hidden" });
   await page.getByText("Alternate session only", { exact: true }).waitFor();
   assert.equal(
     requests.filter((path) =>
@@ -626,6 +871,35 @@ try {
     ),
   );
   assert.equal(countRaw("t100"), 2);
+  await page.getByRole("button", { name: "Back to chat", exact: true }).click();
+  await page.setViewportSize({ width: 1568, height: 961 });
+  const columns = Array.from({ length: 48 }, (_, i) => `Column ${i}`);
+  await emit(`/${alternate}/stream`, "turns", [
+    summary(
+      100,
+      `Readable prose stays bounded.\n\n\`\`\`text\n${"wide-output ".repeat(100)}\n\`\`\`\n\n| ${columns.join(" | ")} |\n| ${columns.map(() => "---").join(" | ")} |\n| ${columns.join(" | ")} |`,
+    ),
+  ]);
+  const prose = page.locator(".agent-message > .markdown > p");
+  await prose
+    .getByText("Readable prose stays bounded.", { exact: true })
+    .waitFor();
+  assert.ok((await prose.boundingBox()).width <= 1041, "prose stays readable");
+  const wideCode = page.locator(".agent-message > .markdown > pre");
+  assert.ok(
+    (await wideCode.boundingBox()).width > 1041,
+    "code uses the extra chat width",
+  );
+  assert.ok(
+    await wideCode.evaluate((el) => el.scrollWidth > el.clientWidth),
+    "long code scrolls within its block",
+  );
+  const wideTable = page.locator(".agent-message > .markdown > table");
+  assert.ok(
+    await wideTable.evaluate((el) => el.scrollWidth > el.clientWidth),
+    "wide tables scroll within their block",
+  );
+  await noOverflow();
   assert.deepEqual(errors, []);
   console.log(
     "PASS lazy history, stable upward pagination, metadata-only processes, tool cache/retry, composite cursors, completion catch-up, session isolation, hidden panels and paged header-only trajectory inspection",

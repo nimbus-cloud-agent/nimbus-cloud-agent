@@ -11,31 +11,26 @@ export default function PanelDivider() {
     const workspace = ref.current?.parentElement;
     if (!workspace) return;
     const sidebar =
-      workspace.querySelector(".sidebar")?.getBoundingClientRect().width ?? 240;
+      workspace.querySelector(".sidebar")?.getBoundingClientRect().width ?? 0;
     const max = Math.max(
       320,
-      Math.min(
-        workspace.clientWidth * 0.55,
-        workspace.clientWidth - sidebar - 420,
-      ),
+      Math.min(760, Math.floor(workspace.clientWidth - sidebar - 721)),
     );
-    const next =
-      value === null ? null : Math.round(Math.max(320, Math.min(max, value)));
-    saved.current = next;
-    if (next === null) workspace.style.removeProperty("--terminal-width");
-    else workspace.style.setProperty("--terminal-width", `${next}px`);
-    setMaximum(Math.round(max));
-    setWidth(
-      next ??
-        Math.round(
-          workspace.querySelector(".terminal-panel")?.getBoundingClientRect()
-            .width ?? 420,
-        ),
+    const preferred =
+      value === null ? null : Math.round(Math.max(320, Math.min(760, value)));
+    const next = Math.min(
+      max,
+      preferred ?? Math.max(320, Math.min(480, innerWidth * 0.3)),
     );
+    if (persist) saved.current = preferred;
+    workspace.style.setProperty("--terminal-width", `${next}px`);
+    setMaximum(max);
+    setWidth(Math.round(next));
     if (persist) {
       try {
-        if (next === null) localStorage.removeItem("nimbus.terminal-width");
-        else localStorage.setItem("nimbus.terminal-width", String(next));
+        if (preferred === null)
+          localStorage.removeItem("nimbus.terminal-width");
+        else localStorage.setItem("nimbus.terminal-width", String(preferred));
       } catch {
         /* Layout still works when browser storage is unavailable. */
       }
@@ -46,13 +41,17 @@ export default function PanelDivider() {
       const stored = Number(localStorage.getItem("nimbus.terminal-width"));
       saved.current = stored > 0 && Number.isFinite(stored) ? stored : null;
     } catch {}
-    const resize = () => {
-      if (innerWidth > 1100) update(saved.current, false);
-    };
+    const resize = () => update(saved.current, false);
+    const workspace = ref.current?.parentElement;
+    const observer = new ResizeObserver(resize);
+    if (workspace) {
+      observer.observe(workspace);
+      const sidebar = workspace.querySelector(".sidebar");
+      if (sidebar) observer.observe(sidebar);
+    }
     resize();
-    window.addEventListener("resize", resize);
     return () => {
-      window.removeEventListener("resize", resize);
+      observer.disconnect();
       document.body.classList.remove("resizing-panels");
     };
   }, []);

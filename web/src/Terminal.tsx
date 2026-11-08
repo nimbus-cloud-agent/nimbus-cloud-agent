@@ -12,15 +12,18 @@ import {
   MapPin,
   Minus,
   Plus,
+  X,
 } from "lucide-react";
 import { api, sandboxLabels, type Session } from "./api";
 import "@xterm/xterm/css/xterm.css";
 export default function TerminalPanel({
   session,
   onError,
+  onClose,
 }: {
   session?: Session;
   onError: (s: string) => void;
+  onClose?: () => void;
 }) {
   const el = useRef<HTMLDivElement>(null);
   const [busy, setBusy] = useState(false),
@@ -89,8 +92,9 @@ export default function TerminalPanel({
     const ws = new WebSocket(
       `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/api/sessions/${session.id}/terminal`,
     );
+    let mounted = true;
     const resize = () => {
-      if (el.current?.clientWidth) {
+      if (mounted && el.current?.clientWidth) {
         try {
           fit.fit();
           if (ws.readyState === 1)
@@ -107,6 +111,7 @@ export default function TerminalPanel({
     const observer = new ResizeObserver(resize);
     observer.observe(el.current);
     ws.onmessage = (e) => {
+      if (!mounted) return;
       const msg = decodeJSON<TerminalMessage>(e.data);
       if (msg.data)
         term.write(
@@ -145,7 +150,6 @@ export default function TerminalPanel({
       if (ws.readyState === 1)
         ws.send(JSON.stringify({ type: "resize", cols, rows }));
     });
-    let mounted = true;
     document.fonts.ready.then(() => {
       if (mounted) resize();
     });
@@ -157,8 +161,11 @@ export default function TerminalPanel({
       terminal.current = null;
       fitAddon.current = null;
       ws.onclose = null;
+      ws.onmessage = null;
       ws.close();
-      term.dispose();
+      // xterm 5.5 queues viewport work in both a timer and an animation frame.
+      // Drain those before releasing the renderer; the socket is already closed.
+      requestAnimationFrame(() => setTimeout(() => term.dispose(), 0));
     };
   }, [session?.id, state, generation]);
   async function action(which: string) {
@@ -181,19 +188,32 @@ export default function TerminalPanel({
           <TerminalSquare size={19} />
           Cloud terminal
         </span>
-        <span className={"sandbox-badge state-" + state}>
-          <span
-            className={
-              "dot " +
-              (state === "running"
-                ? "online"
-                : state === "paused"
-                  ? "paused"
-                  : "")
-            }
-          />
-          {sandboxLabels[state]}
-        </span>
+        <div className="terminal-heading-actions">
+          <span className={"sandbox-badge state-" + state}>
+            <span
+              className={
+                "dot " +
+                (state === "running"
+                  ? "online"
+                  : state === "paused"
+                    ? "paused"
+                    : "")
+              }
+            />
+            {sandboxLabels[state]}
+          </span>
+          {onClose && (
+            <Button
+              isIconOnly
+              size="sm"
+              variant="ghost"
+              aria-label="Close terminal"
+              onPress={onClose}
+            >
+              <X size={17} />
+            </Button>
+          )}
+        </div>
       </div>
       <div className="terminal-meta">
         <span>Dedicated Linux environment</span>
