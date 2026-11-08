@@ -70,6 +70,16 @@ type FileWriteResult struct {
 	Path    string `json:"path"`
 	Written bool   `json:"written"`
 }
+
+// FileEntry is one directory entry for the sandbox file explorer. Path is
+// absolute inside the sandbox so the UI can request it directly; Type is
+// narrowed to the two kinds the explorer renders.
+type FileEntry struct {
+	Name string `json:"name"`
+	Path string `json:"path"`
+	Type string `json:"type"`
+	Size int64  `json:"size,omitempty"`
+}
 type CommandOutput struct {
 	Channel string `json:"channel"`
 	Text    string `json:"text"`

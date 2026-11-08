@@ -3,31 +3,23 @@ import { useEffect, useRef, useState } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { Button } from "@heroui/react";
-import {
-  TerminalSquare,
-  Play,
-  Pause,
-  RotateCw,
-  Clock3,
-  MapPin,
-  Minus,
-  Plus,
-  X,
-} from "lucide-react";
-import { api, sandboxLabels, type Session } from "./api";
+import { TerminalSquare, Minus, Plus, RotateCw } from "lucide-react";
+import { type Session } from "./api";
 import "@xterm/xterm/css/xterm.css";
-export default function TerminalPanel({
+
+// The terminal tab owns the PTY socket. It stays mounted while the Files tab
+// is in front so switching back keeps scrollback and the live shell.
+export default function TerminalView({
   session,
   onError,
-  onClose,
+  visible,
 }: {
   session?: Session;
   onError: (s: string) => void;
-  onClose?: () => void;
+  visible: boolean;
 }) {
   const el = useRef<HTMLDivElement>(null);
-  const [busy, setBusy] = useState(false),
-    [connection, setConnection] = useState("connecting"),
+  const [connection, setConnection] = useState("connecting"),
     [generation, setGeneration] = useState(0);
   const pauseRequested = useRef(false);
   const connected = connection === "connected";
@@ -56,6 +48,17 @@ export default function TerminalPanel({
       localStorage.setItem("nimbus.terminal-font", String(fontSize));
     } catch {}
   }, [fontSize]);
+  // A hidden tab has no measurable size, so the fit has to wait until the
+  // terminal is on screen again.
+  useEffect(() => {
+    if (!visible) return;
+    const frame = requestAnimationFrame(() => {
+      try {
+        fitAddon.current?.fit();
+      } catch {}
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [visible]);
   useEffect(() => {
     if (
       !session ||
@@ -168,176 +171,57 @@ export default function TerminalPanel({
       requestAnimationFrame(() => setTimeout(() => term.dispose(), 0));
     };
   }, [session?.id, state, generation]);
-  async function action(which: string) {
-    if (!session) return;
-    if (which === "pause") pauseRequested.current = true;
-    setBusy(true);
-    try {
-      await api(`/sessions/${session.id}/sandbox/${which}`, "POST");
-    } catch (e) {
-      if (which === "pause") pauseRequested.current = false;
-      onError(String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
   return (
-    <aside className="terminal-panel" aria-label="Cloud terminal">
-      <div className="panel-heading">
-        <span>
-          <TerminalSquare size={19} />
-          Cloud terminal
-        </span>
-        <div className="terminal-heading-actions">
-          <span className={"sandbox-badge state-" + state}>
-            <span
-              className={
-                "dot " +
-                (state === "running"
-                  ? "online"
-                  : state === "paused"
-                    ? "paused"
-                    : "")
-              }
-            />
-            {sandboxLabels[state]}
-          </span>
-          {onClose && (
-            <Button
-              isIconOnly
-              size="sm"
-              variant="ghost"
-              aria-label="Close terminal"
-              onPress={onClose}
-            >
-              <X size={17} />
-            </Button>
-          )}
-        </div>
-      </div>
-      <div className="terminal-meta">
-        <span>Dedicated Linux environment</span>
-        <span>
-          <MapPin size={13} />
-          {session?.sandbox.info?.region ??
-            (session?.sandbox.e2b_sandbox_id ? "us-west-1" : "E2B Cloud")}
-        </span>
-      </div>
-      {state === "running" ? (
-        <div className="terminal-shell">
-          <div className="terminal-bar">
-            <TerminalSquare size={15} />
-            <code>/workspace</code>
-            <span className="terminal-controls">
-              <Button
-                isIconOnly
-                size="sm"
-                variant="ghost"
-                aria-label="Decrease terminal font size"
-                isDisabled={fontSize <= 12}
-                onPress={() => setFontSize((s) => Math.max(12, s - 1))}
-              >
-                <Minus size={15} />
-              </Button>
-              <span className="terminal-font-size" aria-live="polite">
-                {fontSize}
-              </span>
-              <Button
-                isIconOnly
-                size="sm"
-                variant="ghost"
-                aria-label="Increase terminal font size"
-                isDisabled={fontSize >= 20}
-                onPress={() => setFontSize((s) => Math.min(20, s + 1))}
-              >
-                <Plus size={15} />
-              </Button>
-              <Button
-                isIconOnly
-                size="sm"
-                variant="ghost"
-                aria-label="Reconnect terminal"
-                onPress={() => setGeneration((x) => x + 1)}
-              >
-                <RotateCw size={15} />
-              </Button>
-            </span>
-          </div>
-          <div ref={el} className="xterm-host" />
-          <div className="terminal-hint">
-            <span className={connected ? "dot online" : "dot"} />
-            {!connected
-              ? connection === "connecting"
-                ? "Connecting to the cloud terminal…"
-                : "Connection closed. Select the reconnect button above."
-              : session?.agent_state !== "idle"
-                ? "The agent is using this sandbox too."
-                : "Your commands run directly in the sandbox."}
-          </div>
-        </div>
-      ) : (
-        <div className="terminal-empty">
-          <div className="cloud-mark">
-            <TerminalSquare size={32} strokeWidth={1.5} />
-          </div>
-          <h3>
-            {state === "error"
-              ? "Sandbox temporarily unavailable"
-              : state === "killed"
-                ? "Sandbox deleted"
-                : state === "paused"
-                  ? "Your workspace is saved and ready to resume"
-                  : "Your cloud workspace"}
-          </h3>
-          <p>
-            {state === "error"
-              ? session?.sandbox.error
-              : state === "killed"
-                ? "Your chat history is still available. Files in the deleted sandbox cannot be recovered; starting again creates a new environment."
-                : state === "paused"
-                  ? "Your files and memory are preserved in the cloud. Resume the sandbox to continue where you left off."
-                  : "The agent starts the sandbox when a task needs it. You can also start it now and run commands in the terminal."}
-          </p>
+    <div className="terminal-shell">
+      <div className="terminal-bar">
+        <TerminalSquare size={15} />
+        <code>/workspace</code>
+        <span className="terminal-controls">
           <Button
-            variant="secondary"
-            isDisabled={!session}
-            isPending={busy || state === "provisioning"}
-            onPress={() => action("start")}
+            isIconOnly
+            size="sm"
+            variant="ghost"
+            aria-label="Decrease terminal font size"
+            isDisabled={fontSize <= 12}
+            onPress={() => setFontSize((s) => Math.max(12, s - 1))}
           >
-            <Play size={16} />
-            {state === "paused" ? "Resume sandbox" : "Start sandbox"}
+            <Minus size={15} />
           </Button>
-          <small>Browsing your chats does not start the sandbox.</small>
-        </div>
-      )}
-      <div className="terminal-bottom">
-        {session?.sandbox.e2b_sandbox_id && (
-          <div className="sandbox-id">
-            <span>Sandbox ID</span>
-            <code title={session.sandbox.e2b_sandbox_id}>
-              {session.sandbox.e2b_sandbox_id}
-            </code>
-          </div>
-        )}
-        <div className="row">
-          <span className="idle-hint">
-            <Clock3 size={14} />
-            Pauses after 15 minutes of inactivity
+          <span className="terminal-font-size" aria-live="polite">
+            {fontSize}
           </span>
-          {state === "running" && (
-            <Button
-              size="sm"
-              variant="ghost"
-              isPending={busy}
-              isDisabled={session?.agent_state !== "idle"}
-              onPress={() => action("pause")}
-            >
-              <Pause size={15} />
-              Pause
-            </Button>
-          )}
-        </div>
+          <Button
+            isIconOnly
+            size="sm"
+            variant="ghost"
+            aria-label="Increase terminal font size"
+            isDisabled={fontSize >= 20}
+            onPress={() => setFontSize((s) => Math.min(20, s + 1))}
+          >
+            <Plus size={15} />
+          </Button>
+          <Button
+            isIconOnly
+            size="sm"
+            variant="ghost"
+            aria-label="Reconnect terminal"
+            onPress={() => setGeneration((x) => x + 1)}
+          >
+            <RotateCw size={15} />
+          </Button>
+        </span>
       </div>
-    </aside>
+      <div ref={el} className="xterm-host" />
+      <div className="terminal-hint">
+        <span className={connected ? "dot online" : "dot"} />
+        {!connected
+          ? connection === "connecting"
+            ? "Connecting to the cloud terminal…"
+            : "Connection closed. Select the reconnect button above."
+          : session?.agent_state !== "idle"
+            ? "The agent is using this sandbox too."
+            : "Your commands run directly in the sandbox."}
+      </div>
+    </div>
   );
 }

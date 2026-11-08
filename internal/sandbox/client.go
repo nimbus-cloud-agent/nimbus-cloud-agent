@@ -247,6 +247,39 @@ type streamReadCloser struct {
 	cancel context.CancelFunc
 }
 
+// ListDir returns one directory level for the file explorer. The explorer
+// expands directories lazily, so nothing here recurses. Symlinks are reported
+// as the kind envd resolved them to, which keeps a dangling link out of the
+// directory branch instead of failing the whole listing.
+func (c *Client) ListDir(ctx context.Context, id, path string) ([]model.FileEntry, error) {
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	if id == "" {
+		return nil, errors.New("sandbox ID is required")
+	}
+	sb, err := c.sdk.Connect(ctx, id, 60)
+	if err != nil {
+		return nil, c.failure(ctx, err)
+	}
+	infos, err := sb.Filesystem.List(ctx, path, e2b.WithFileUser("root"))
+	if err != nil {
+		return nil, c.failure(ctx, err)
+	}
+	entries := make([]model.FileEntry, 0, len(infos))
+	for _, info := range infos {
+		entryPath := info.Path
+		if entryPath == "" {
+			entryPath = strings.TrimSuffix(path, "/") + "/" + info.Name
+		}
+		kind := "file"
+		if info.Type == "directory" {
+			kind = "directory"
+		}
+		entries = append(entries, model.FileEntry{Name: info.Name, Path: entryPath, Type: kind, Size: info.Size})
+	}
+	return entries, nil
+}
+
 func (c *streamReadCloser) Close() error {
 	defer c.cancel()
 	return c.ReadCloser.Close()

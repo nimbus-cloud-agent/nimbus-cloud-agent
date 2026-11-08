@@ -260,6 +260,38 @@ export type TerminalMessage = {
   error?: string;
 };
 
+// One directory level as the sandbox reports it. The explorer expands
+// directories lazily, so this is always a single ListDir call.
+export type FileEntry = {
+  name: string;
+  path: string;
+  type: "file" | "directory";
+  size?: number;
+};
+export type FileListing = { path: string; entries: FileEntry[] };
+
+export function sandboxFiles(
+  session: string,
+  path: string,
+  signal?: AbortSignal,
+): Promise<FileListing> {
+  return api<FileListing>(
+    `/sessions/${session}/sandbox/files?path=${encodeURIComponent(path)}`,
+    "GET",
+    undefined,
+    signal,
+  );
+}
+
+// Raw preview URL. Each segment is encoded so names with spaces, # or ? still
+// address the file instead of cutting the path short.
+export function sandboxRawURL(session: string, path: string): string {
+  return (
+    `/api/sessions/${session}/sandbox/raw` +
+    path.split("/").map(encodeURIComponent).join("/")
+  );
+}
+
 // All JSON parsing belongs to transport ingress, never component render paths.
 export function decodeJSON<T>(text: string): T {
   return JSON.parse(text) as T;

@@ -47,7 +47,7 @@ import {
   type UserQuestion,
 } from "./api";
 import { Picker, Toggle } from "./components";
-import TerminalPanel from "./Terminal";
+import SandboxPanel from "./Sandbox";
 import Settings from "./Settings";
 import Conversation from "./Conversation";
 import { TurnTraceProvider, TrajectoryTurn } from "./TurnTrace";
@@ -759,7 +759,7 @@ export default function App() {
             <Button
               size="sm"
               variant={terminalVisible ? "secondary" : "ghost"}
-              aria-label="Terminal"
+              aria-label="Sandbox"
               aria-expanded={terminalVisible}
               onPress={() => {
                 if (focused) {
@@ -769,7 +769,7 @@ export default function App() {
               }}
             >
               <TerminalSquare size={17} />
-              <span className="toolbar-label">Terminal</span>
+              <span className="toolbar-label">Sandbox</span>
             </Button>
             <Button
               isIconOnly
@@ -1113,7 +1113,7 @@ export default function App() {
             <>
               <PanelDivider />
               <div className="terminal-dock">
-                <TerminalPanel
+                <SandboxPanel
                   session={current}
                   onError={setError}
                   onClose={() => setTerminalOpen(false)}
@@ -1153,11 +1153,15 @@ export default function App() {
                 className="workspace-overlay-container"
               >
                 <Modal.Dialog className="terminal-overlay-dialog">
-                  <Modal.CloseTrigger aria-label="Close terminal" />
+                  <Modal.CloseTrigger aria-label="Close sandbox workspace" />
                   <Modal.Header>
-                    <Modal.Heading>Terminal</Modal.Heading>
+                    <Modal.Heading>Sandbox workspace</Modal.Heading>
                   </Modal.Header>
-                  <TerminalPanel session={current} onError={setError} />
+                  <SandboxPanel
+                    session={current}
+                    onError={setError}
+                    overlay
+                  />
                 </Modal.Dialog>
               </Modal.Container>
             </Modal.Backdrop>

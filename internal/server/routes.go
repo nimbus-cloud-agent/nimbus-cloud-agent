@@ -183,6 +183,8 @@ func (s *Server) routes(r *gin.Engine) {
 		c.JSON(200, gin.H{"ok": true})
 	})
 	r.GET("/api/sessions/:id/terminal", s.terminal)
+	r.GET("/api/sessions/:id/sandbox/files", s.sandboxFiles)
+	r.GET("/api/sessions/:id/sandbox/raw/*path", s.sandboxRawFile)
 	s.settingsRoutes(r)
 	s.imageRoutes(r)
 	s.libraryRoutes(r)

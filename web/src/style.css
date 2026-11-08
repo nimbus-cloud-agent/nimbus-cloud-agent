@@ -1552,6 +1552,275 @@ pre {
   color: var(--muted);
 }
 
+/* Sandbox workspace: one panel, two views. The tab strip is a control rather
+   than document navigation, so it stays compact and quiet above the work
+   surface instead of competing with the tree. */
+.sandbox-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.sandbox-tabs {
+  display: inline-flex;
+  gap: 2px;
+  align-self: flex-start;
+  margin: 0 24px 12px;
+  padding: 3px;
+  background: var(--default);
+  border-radius: 7px;
+}
+.sandbox-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 11px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 1.2;
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
+}
+.sandbox-tab:hover {
+  color: var(--foreground);
+}
+.sandbox-tab.is-active {
+  background: var(--surface);
+  color: var(--accent);
+  box-shadow: 0 1px 2px #17231e14;
+}
+.sandbox-tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.sandbox-views {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.sandbox-view {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.sandbox-view[hidden] {
+  display: none;
+}
+
+/* File explorer: a quiet tree on the same white surface as the panel. Rows are
+   dense because this is a file list, not a set of cards. */
+.files-view {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  margin: 0 12px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  overflow: hidden;
+}
+.files-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 6px 13px;
+  border-bottom: 1px solid var(--border);
+  background: var(--accent-soft);
+}
+.files-root {
+  font: 12px var(--font-mono);
+  color: var(--accent-soft-foreground);
+}
+.files-toolbar .button {
+  margin-left: auto;
+  color: var(--muted);
+}
+.files-tree {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 6px 6px 10px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+.file-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--foreground);
+  font-size: 12.5px;
+  line-height: 1.5;
+  text-align: left;
+  cursor: pointer;
+}
+.file-row:hover {
+  background: var(--default);
+}
+.file-row.is-selected {
+  background: var(--accent-soft);
+  color: var(--accent-soft-foreground);
+}
+.file-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.file-row svg {
+  flex: none;
+  color: #7b8f84;
+}
+.file-row.is-dir svg {
+  color: #6f8a7a;
+}
+.file-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.file-size {
+  flex: none;
+  margin-left: auto;
+  padding-left: 8px;
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.file-chevron {
+  color: var(--muted);
+  transition: transform 120ms ease;
+}
+.file-chevron.is-open {
+  transform: rotate(90deg);
+}
+.file-note {
+  padding: 6px 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.file-note.is-error {
+  color: #a63838;
+}
+
+/* Preview keeps the terminal's dark surface so both tabs feel like the same
+   workbench, and the file text gets a monospace reading surface. */
+.file-preview {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  margin: 0 12px 12px;
+  border: 1px solid #26392e;
+  border-radius: 10px;
+  background: var(--terminal);
+  color-scheme: dark;
+  overflow: hidden;
+}
+.file-preview-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  background: #213029;
+  border-bottom: 1px solid #35473b;
+  color: #b6c8bd;
+}
+.file-preview-bar .button {
+  width: 26px;
+  height: 26px;
+  min-height: 26px;
+  color: #b6c8bd;
+  border-radius: 5px;
+}
+.file-preview-bar .button:hover {
+  background: #ffffff12;
+}
+.file-preview-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 12px;
+}
+.file-preview-name > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.file-preview-name svg {
+  flex: none;
+}
+.file-preview-bar .file-size {
+  color: var(--terminal-muted);
+}
+.file-preview-open {
+  display: inline-flex;
+  margin-left: 2px;
+  color: #b6c8bd;
+}
+.file-preview-open:hover {
+  color: #e0e9e4;
+}
+.file-preview-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+/* The global pre carries a light surface for chat code blocks; the preview
+   sits on the terminal surface, so it resets that background and lets the
+   body own the scrolling. */
+.file-text {
+  min-width: min-content;
+  max-height: none;
+  margin: 0;
+  padding: 14px 16px;
+  border-radius: 0;
+  background: transparent;
+  font: 12px/1.65 var(--font-mono);
+  color: #dbe7df;
+  white-space: pre;
+  overflow-wrap: normal;
+  tab-size: 2;
+}
+.file-preview-note {
+  margin: 0;
+  padding: 24px 18px;
+  font-size: 12.5px;
+  color: var(--terminal-muted);
+}
+.file-preview-body.kind-image {
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: #f2f6f3;
+}
+.file-preview-body.kind-image img {
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 4px;
+}
+.file-preview-body.kind-html {
+  background: #fff;
+}
+.file-html {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #fff;
+}
+
 /* Settings use the same scale and quiet surface treatment as the workspace. */
 .modal__dialog {
   border: 1px solid var(--border);
@@ -2335,4 +2604,22 @@ pre {
 .library-meta dd {
   margin: 0;
   overflow-wrap: anywhere;
+}
+
+/* Overlay mode: the dialog heading owns the title, so the panel heading keeps
+   only the right-aligned state badge. */
+.panel-heading.is-overlay {
+  justify-content: flex-end;
+  padding-top: 4px;
+  padding-bottom: 6px;
+}
+
+/* In dark mode the active tab sits on a darker surface than the strip, so a
+   hairline keeps it readable as the selected control. */
+@media (prefers-color-scheme: dark) {
+  .sandbox-tab.is-active {
+    box-shadow: none;
+    outline: 1px solid var(--border);
+    outline-offset: -1px;
+  }
 }

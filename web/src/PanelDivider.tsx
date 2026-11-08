@@ -60,7 +60,7 @@ export default function PanelDivider() {
       ref={ref}
       className="panel-divider"
       role="separator"
-      aria-label="Terminal width"
+      aria-label="Sandbox panel width"
       aria-orientation="vertical"
       aria-valuemin={320}
       aria-valuemax={maximum}

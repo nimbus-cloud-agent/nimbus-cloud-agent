@@ -26,6 +26,9 @@ type Service interface {
 	// The caller must close the stream; the size is advisory and the
 	// caller enforces its own cap while reading.
 	ReadFileStream(ctx context.Context, sandboxID, path string) (io.ReadCloser, int64, error)
+	// ListDir returns one directory level. It never recurses: the explorer
+	// expands directories lazily, so a deep tree costs one call per open node.
+	ListDir(ctx context.Context, sandboxID, path string) ([]model.FileEntry, error)
 	OpenTerminal(ctx context.Context, sandboxID string) (Terminal, error)
 }
 

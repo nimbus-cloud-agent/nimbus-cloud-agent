@@ -26,10 +26,11 @@ import (
 type fakeSandboxService struct {
 	files map[string][]byte
 	sizes map[string]int64
+	dirs  map[string][]model.FileEntry
 }
 
 func newFakeSandboxService() *fakeSandboxService {
-	return &fakeSandboxService{files: map[string][]byte{}, sizes: map[string]int64{}}
+	return &fakeSandboxService{files: map[string][]byte{}, sizes: map[string]int64{}, dirs: map[string][]model.FileEntry{}}
 }
 func (f *fakeSandboxService) Create(context.Context, string, string) (model.SandboxInfo, error) {
 	return model.SandboxInfo{}, errors.New("fake sandbox cannot create")
@@ -76,6 +77,13 @@ func (f *fakeSandboxService) ReadFileStream(_ context.Context, _, path string) (
 }
 func (f *fakeSandboxService) OpenTerminal(context.Context, string) (sandbox.Terminal, error) {
 	return nil, errors.New("fake sandbox cannot open a terminal")
+}
+func (f *fakeSandboxService) ListDir(_ context.Context, _, path string) ([]model.FileEntry, error) {
+	entries, ok := f.dirs[path]
+	if !ok {
+		return nil, errors.New("directory not found in fake sandbox")
+	}
+	return entries, nil
 }
 
 var _ sandbox.Service = (*fakeSandboxService)(nil)
