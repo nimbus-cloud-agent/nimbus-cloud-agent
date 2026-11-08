@@ -884,11 +884,14 @@ try {
   await prose
     .getByText("Readable prose stays bounded.", { exact: true })
     .waitFor();
-  assert.ok((await prose.boundingBox()).width <= 1041, "prose stays readable");
+  const proseBox = await prose.boundingBox();
+  assert.ok(proseBox.width <= 1041, "prose stays readable");
   const wideCode = page.locator(".agent-message > .markdown > pre");
+  const codeBox = await wideCode.boundingBox();
+  assert.ok(codeBox.width <= 1041, "code stays inside the reading column");
   assert.ok(
-    (await wideCode.boundingBox()).width > 1041,
-    "code uses the extra chat width",
+    Math.abs(codeBox.x - proseBox.x) <= 1,
+    "code starts on the prose column edge instead of protruding",
   );
   assert.ok(
     await wideCode.evaluate((el) => el.scrollWidth > el.clientWidth),

@@ -1819,17 +1819,14 @@ pre {
   max-height: calc(100dvh - 24px);
   overflow-y: auto;
 }
-.conversation :is(.turn, .markdown, .assistant-message, .user-message) {
+.conversation :is(.markdown, .assistant-message, .user-message) {
   min-width: 0;
   max-width: 100%;
 }
-.conversation > .turn > .user-message,
-.conversation .agent-message > :not(.markdown),
-.conversation .agent-message > .markdown > :not(pre):not(table) {
+/* One measure for every block: code and tables scroll inside it instead of
+   extending past the prose column. */
+.conversation > * {
   max-width: 1040px;
-  margin-inline: auto;
-}
-.conversation .agent-message > .markdown > :is(pre, table) {
   margin-inline: auto;
 }
 .markdown :is(pre, table) {
