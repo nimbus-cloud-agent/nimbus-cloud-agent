@@ -3,7 +3,6 @@ package server
 import (
 	"fmt"
 	"io"
-	"mime"
 	"path"
 	"strings"
 
@@ -115,9 +114,12 @@ func humanSize(bytes int64) string {
 	return fmt.Sprintf("%d B", bytes)
 }
 
-// previewContentType picks the response type for the bytes. Known source and
-// text types are forced to a charset so the browser never guesses, and
-// anything unknown falls back to text/plain rather than an opaque download.
+// previewContentType picks the response type for the bytes. Source and text
+// types are forced to a charset so the browser never guesses, and anything
+// unknown falls back to text/plain rather than an opaque download. The map is
+// explicit on purpose: the host mime database differs across platforms (Ubuntu
+// reports text/markdown for .md where macOS reports nothing), and a preview
+// must not change type with the operating system.
 func previewContentType(name string) string {
 	switch strings.ToLower(path.Ext(name)) {
 	case ".html", ".htm":
@@ -126,7 +128,7 @@ func previewContentType(name string) string {
 		return "text/css; charset=utf-8"
 	case ".js", ".mjs", ".cjs":
 		return "text/javascript; charset=utf-8"
-	case ".json":
+	case ".json", ".jsonc":
 		return "application/json; charset=utf-8"
 	case ".svg":
 		return "image/svg+xml"
@@ -142,9 +144,6 @@ func previewContentType(name string) string {
 		return "image/avif"
 	case ".pdf":
 		return "application/pdf"
-	}
-	if ct := mime.TypeByExtension(path.Ext(name)); ct != "" {
-		return ct
 	}
 	return "text/plain; charset=utf-8"
 }

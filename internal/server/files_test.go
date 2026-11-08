@@ -122,6 +122,12 @@ func TestSandboxRawFilePreview(t *testing.T) {
 	if headers["Content-Type"] != "text/plain; charset=utf-8" || headers["Content-Security-Policy"] != "sandbox" {
 		t.Fatalf("text headers: %v", headers)
 	}
+	// Image types are pinned here rather than read from the host mime database,
+	// so the preview type is the same on every platform.
+	fake.files["/workspace/logo.png"] = []byte("\x89PNG")
+	if code, _, headers := filesGet(r, "/api/sessions/"+id+"/sandbox/raw/workspace/logo.png"); code != 200 || headers["Content-Type"] != "image/png" {
+		t.Fatalf("image raw: %d %v", code, headers)
+	}
 	// A path outside the workspace never reaches the sandbox.
 	if code, _, _ := filesGet(r, "/api/sessions/"+id+"/sandbox/raw/etc/passwd"); code != 400 {
 		t.Fatalf("escape raw: got %d, want 400", code)
